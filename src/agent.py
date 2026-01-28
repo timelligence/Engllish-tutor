@@ -1,510 +1,230 @@
-import json
-import time
 import os
-import sys
-import asyncio
-import inspect
-import importlib.util
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+import google.generativeai as genai
+import streamlit as st
+from dotenv import load_dotenv
 
-# Ensure project root is on sys.path when running this file directly
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+# --- CONFIGURARE ---
+load_dotenv()
+api_key = os.getenv("GOOGLE_API_KEY")
+if not api_key:
+    st.error("❌ EROARE: Lipsește GOOGLE_API_KEY din fișierul .env")
+    st.stop()
 
-from google import genai
+genai.configure(api_key=api_key)
+MODEL_NAME = 'gemini-2.0-flash'
 
-from src.config import settings
-from src.memory import MemoryManager
-from src.tools.openai_proxy import call_openai_chat
-
-
-class GeminiAgent:
+# --- DEFINIRE SCENARII ---
+SCENARIOS = {
+    "Client Insistent (Business)": """
+        ROLE: Pushy Client.
+        GOAL: Force the user to accept an impossible deadline.
+        TONE: Urgent, slightly rude.
+        IMPORTANT: Before replying, YOU MUST output a correction block if the user made ANY mistake.
+        FORMAT:
+        [FEEDBACK: "User said..." -> "Better: ..."]
+        [ROLEPLAY RESPONSE: "Listen, I don't care about the details..."]
+    """,
+    "Interviu Senior Developer": """
+        ROLE: Engineering Manager (Alex).
+        GOAL: Assess technical depth.
+        IMPORTANT: Correct technical terms and grammar explicitly.
+        FORMAT:
+        [FEEDBACK: "You said 'I make code' -> 'I write/deploy code'."]
+        [ROLEPLAY RESPONSE: "Interesting approach. But how does it scale?"]
+    """,
+    "Recrutare UK (Horeca/Hospitality)": """
+        ROLE: Sarah, HR Recruiter London.
+        GOAL: Interview for Waiter/Housekeeping.
+        TONE: British, fast, pragmatic.
+        CRITICAL INSTRUCTION: Correct the user's English in every turn.
+        STARTING LINE: "Right then, love. Thanks for popping in. I see you're looking for some shift work. Have you got experience in the UK?"
     """
-    A production-grade agent wrapper for Gemini 3.
-    Implements the Think-Act-Reflect loop with MCP integration.
-
-    The agent supports two types of tools:
-    1. Local tools: Python functions in src/tools/ directory
-    2. MCP tools: Tools from connected MCP servers (when MCP_ENABLED=true)
-
-    MCP tools are transparently integrated and appear alongside local tools,
-    allowing the agent to use external services and capabilities seamlessly.
-    """
-
-    def __init__(self):
-        self.settings = settings
-        self.memory = MemoryManager()
-        self.mcp_manager = None  # Will be initialized if MCP is enabled
-        self.use_openai_backend = False  # Use OpenAI-compatible backend when configured
-
-        # Dynamically load all tools from src/tools/ directory
-        self.available_tools: Dict[str, Callable[..., Any]] = self._load_tools()
-
-        # Initialize MCP integration if enabled
-        if self.settings.MCP_ENABLED:
-            self._initialize_mcp()
-
-        print(
-            f"🤖 Initializing {self.settings.AGENT_NAME} with model {self.settings.GEMINI_MODEL_NAME}..."
-        )
-        print(
-            f"   📦 Discovered {len(self.available_tools)} tools: {', '.join(list(self.available_tools.keys())[:10])}{'...' if len(self.available_tools) > 10 else ''}"
-        )
-
-        # Initialize the GenAI client if credentials are available. Some test
-        # environments do not provide a Google API key, so fall back to a
-        # lightweight dummy client that returns a canned response. This keeps
-        # the agent usable in tests without external network access.
-        # When running under pytest, prefer a dummy client to keep tests
-        # deterministic even if an API key is present in the environment.
-        running_under_pytest = (
-            "PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules
-        )
-
-        if running_under_pytest:
-
-            class _DummyClient:
-                class _Models:
-                    def generate_content(self, model, contents):
-                        class _R:
-                            text = "I have completed the task"
-
-                        return _R()
-
-                def __init__(self):
-                    self.models = self._Models()
-
-            self.client = _DummyClient()
-        else:
-            try:
-                # If a Google API key is provided, prefer Gemini.
-                if self.settings.GOOGLE_API_KEY:
-                    self.client = genai.Client(api_key=self.settings.GOOGLE_API_KEY)
-                else:
-                    # If no Google key but an OpenAI-compatible endpoint is set,
-                    # route generations through the OpenAI proxy (e.g., local Ollama).
-                    if self.settings.OPENAI_BASE_URL:
-                        self.use_openai_backend = True
-                        print(
-                            f"🔄 Using OpenAI-compatible backend at {self.settings.OPENAI_BASE_URL} "
-                            f"with model {self.settings.OPENAI_MODEL}"
-                        )
-                        self.client = None  # Not used when proxying to OpenAI
-                    else:
-                        raise ValueError("No GOOGLE_API_KEY or OPENAI_BASE_URL configured")
-            except Exception as e:
-                print(f"⚠️ genai client not initialized: {e}")
-
-                class _DummyClientFallback:
-                    class _Models:
-                        def generate_content(self, model, contents):
-                            class _R:
-                                text = "I have completed the task"
-
-                            return _R()
-
-                    def __init__(self):
-                        self.models = self._Models()
-
-                self.client = _DummyClientFallback()
-
-    def _initialize_mcp(self) -> None:
-        """
-        Initialize MCP (Model Context Protocol) integration.
-
-        This method:
-        1. Creates an MCP client manager
-        2. Connects to configured MCP servers
-        3. Discovers and registers MCP tools
-        4. Makes MCP tools available alongside local tools
-        """
-        try:
-            from src.mcp_client import MCPClientManagerSync
-            from src.tools.mcp_tools import _set_mcp_manager
-
-            print("🔌 Initializing MCP integration...")
-
-            # Create and initialize the MCP manager
-            self.mcp_manager = MCPClientManagerSync()
-            self.mcp_manager.initialize()
-
-            # Set global reference for mcp_tools helper functions
-            _set_mcp_manager(self.mcp_manager._async_manager)
-
-            # Load MCP tools into available_tools
-            mcp_tools = self.mcp_manager.get_all_tools_as_callables()
-
-            if mcp_tools:
-                self.available_tools.update(mcp_tools)
-                print(f"   🔧 Loaded {len(mcp_tools)} MCP tools")
-
-        except ImportError as e:
-            print(f"   ⚠️ MCP library not installed: {e}")
-            print("      To enable MCP, run: pip install 'mcp[cli]'")
-        except Exception as e:
-            print(f"   ⚠️ Failed to initialize MCP: {e}")
-
-    def _load_tools(self) -> Dict[str, Callable[..., Any]]:
-        """
-        Automatically discover and load tools from src/tools/ directory.
-
-        Scans the tools directory for Python modules, imports them dynamically,
-        and registers any public functions (not starting with _) as available tools.
-        This enables the "zero-config" philosophy - just drop a Python file into
-        src/tools/ and it becomes available to the agent.
-
-        Returns:
-            Dictionary mapping tool names to callable functions.
-        """
-        tools = {}
-
-        # Get the src/tools directory path relative to this file
-        tools_dir = Path(__file__).parent / "tools"
-
-        if not tools_dir.exists():
-            print(f"⚠️ Tools directory not found: {tools_dir}")
-            return tools
-
-        # Iterate through all Python files in the tools directory
-        for tool_file in tools_dir.glob("*.py"):
-            # Skip __init__.py and private modules
-            if tool_file.name.startswith("_"):
-                continue
-
-            module_name = tool_file.stem
-
-            try:
-                # Dynamically import the module
-                spec = importlib.util.spec_from_file_location(
-                    f"src.tools.{module_name}", tool_file
-                )
-                if spec and spec.loader:
-                    module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
-
-                    # Find all public functions in the module
-                    for name, obj in inspect.getmembers(module, inspect.isfunction):
-                        # Only register public functions defined in this module
-                        if (
-                            not name.startswith("_")
-                            and obj.__module__ == f"src.tools.{module_name}"
-                        ):
-                            tools[name] = obj
-                            print(f"   ✓ Loaded tool: {name} from {module_name}.py")
-
-            except Exception as e:
-                print(f"   ⚠️ Failed to load tools from {tool_file.name}: {e}")
-
-        return tools
-
-    def _load_context(self) -> str:
-        """
-        Automatically load and concatenate all markdown files from .context/ directory.
-
-        This allows users to add project-specific knowledge, coding standards, or
-        custom rules by simply dropping .md files into .context/. The content is
-        automatically injected into the agent's system prompt.
-
-        Returns:
-            Concatenated content of all .md files in .context/ directory.
-        """
-        context_parts = []
-
-        # Get the .context directory path relative to project root
-        # Navigate up from src/ to project root
-        context_dir = Path(__file__).parent.parent / ".context"
-
-        if not context_dir.exists():
-            return ""
-
-        # Load all markdown files
-        for context_file in sorted(context_dir.glob("*.md")):
-            try:
-                content = context_file.read_text(encoding="utf-8")
-                context_parts.append(f"\n--- {context_file.name} ---\n{content}")
-            except Exception as e:
-                print(f"   ⚠️ Failed to load context from {context_file.name}: {e}")
-
-        if context_parts:
-            print(f"   📚 Loaded context from {len(context_parts)} file(s)")
-
-        return "\n".join(context_parts)
-
-    def _get_tool_descriptions(self) -> str:
-        """
-        Dynamically builds a list of available tools and their docstrings for prompt injection.
-        """
-        descriptions: List[str] = []
-        for name, fn in self.available_tools.items():
-            doc = (fn.__doc__ or "No description provided.").strip().replace("\n", " ")
-            descriptions.append(f"- {name}: {doc}")
-        return "\n".join(descriptions)
-
-    def _format_context_messages(self, context_messages: List[Dict[str, Any]]) -> str:
-        """
-        Flattens structured context into a plain-text prompt block.
-        """
-        lines = [
-            f"{msg.get('role', '').upper()}: {msg.get('content', '')}"
-            for msg in context_messages
-        ]
-        return "\n".join(lines)
-
-    def _call_gemini(self, prompt: str) -> str:
-        """Lightweight wrapper around the Gemini content generation call."""
-        if self.use_openai_backend:
-            try:
-                return call_openai_chat(
-                    prompt=prompt,
-                    model=self.settings.OPENAI_MODEL,
-                )
-            except Exception as exc:
-                return f"[openai-backend-error] {exc}"
-
-        response_obj = self.client.models.generate_content(
-            model=self.settings.GEMINI_MODEL_NAME,
-            contents=prompt,
-        )
-        # Safely handle cases where the API or dummy client returns None or a structure without a text attribute
-        text = getattr(response_obj, "text", None)
-        if text is None:
-            # Try an alternative common attribute
-            text = getattr(response_obj, "content", None)
-        if text is None:
-            # Fallback: attempt to stringify the whole response object, or return empty string
-            try:
-                return str(response_obj).strip()
-            except Exception:
-                return ""
-        # Ensure we have a string to call strip() on
-        if not isinstance(text, str):
-            try:
-                text = json.dumps(text)
-            except Exception:
-                text = str(text)
-        return text.strip()
-
-    def _extract_tool_call(
-        self, response_text: str
-    ) -> Tuple[Optional[str], Dict[str, Any]]:
-        """
-        Parses a model response to detect a tool invocation request.
-
-        Supports two patterns:
-        1) JSON object: {"action": "tool_name", "args": {...}}
-        2) Plain text line starting with 'Action: <tool_name>'
-        """
-        cleaned = response_text.strip()
-
-        try:
-            payload = json.loads(cleaned)
-            if isinstance(payload, dict):
-                action = payload.get("action") or payload.get("tool")
-                args = payload.get("args") or payload.get("input") or {}
-                if action:
-                    return str(action), args if isinstance(args, dict) else {}
-        except json.JSONDecodeError:
-            pass
-
-        for line in cleaned.splitlines():
-            if line.lower().startswith("action:"):
-                action = line.split(":", 1)[1].strip()
-                if action:
-                    return action, {}
-
-        return None, {}
-
-    def summarize_memory(
-        self, old_messages: List[Dict[str, Any]], previous_summary: str
-    ) -> str:
-        """
-        Summarize older history into a concise buffer using Gemini.
-        """
-        history_block = "\n".join(
-            [
-                f"- {m.get('role', 'unknown')}: {m.get('content', '')}"
-                for m in old_messages
-            ]
-        )
-        prompt = (
-            "You are an expert conversation summarizer for an autonomous agent.\n"
-            "Goals:\n"
-            "1) Preserve decisions, intents, constraints, and outcomes.\n"
-            "2) Omit small talk and low-signal chatter.\n"
-            "3) Keep the summary under 120 words and in plain text.\n"
-            "4) Maintain continuity so future turns understand what has already happened.\n\n"
-            f"Previous summary:\n{previous_summary or '[none]'}\n\n"
-            "Messages to summarize (oldest first):\n"
-            f"{history_block}\n\n"
-            "Return only the new merged summary."
-        )
-
-        # Use the centralized wrapper that safely handles missing/None responses
-        return self._call_gemini(prompt)
-
-    def think(self, task: str) -> str:
-        """
-        Simulates the 'Deep Think' process of Gemini 3.
-        """
-        # Load context knowledge from .context/ directory
-        context_knowledge = self._load_context()
-
-        # Inject context into system prompt
-        system_prompt = (
-            f"{context_knowledge}\n\n"
-            "You are a focused agent following the Artifact-First protocol. Stay concise and tactical."
-        )
-
-        context_window = self.memory.get_context_window(
-            system_prompt=system_prompt,
-            max_messages=10,
-            summarizer=self.summarize_memory,
-        )
-
-        print(f"\n🤔 <thought> Analyzing task: '{task}'")
-        print(f"   - Loaded context messages: {len(context_window)}")
-        print("   - Checking mission context...")
-        print("   - Identifying necessary tools...")
-        print("   - Formulating execution plan...")
-        print("</thought>\n")
-
-        time.sleep(1)
-        return "Plan formulated."
-
-    def act(self, task: str) -> str:
-        """
-        Executes the task using available tools and generates a real response.
-        """
-        # 1) Record user input
-        self.memory.add_entry("user", task)
-
-        # 2) Think
-        self.think(task)
-
-        # 3) Tool dispatch entry point
-        print(f"[TOOLS] Executing tools for: {task}")
-        tool_list = self._get_tool_descriptions()
-
-        system_prompt = (
-            "You are an expert AI agent following the Think-Act-Reflect loop.\n"
-            "You have access to the following tools:\n"
-            f"{tool_list}\n\n"
-            "If you need a tool, respond ONLY with a JSON object using the schema:\n"
-            '{"action": "<tool_name>", "args": {"param": "value"}}\n'
-            "If no tool is needed, reply directly with the final answer."
-        )
-
-        try:
-            context_messages = self.memory.get_context_window(
-                system_prompt=system_prompt,
-                max_messages=10,
-                summarizer=self.summarize_memory,
-            )
-            formatted_context = self._format_context_messages(context_messages)
-            initial_prompt = f"{formatted_context}\n\nCurrent Task: {task}"
-
-            print("💬 Sending request to Gemini...")
-            first_reply = self._call_gemini(initial_prompt)
-            tool_name, tool_args = self._extract_tool_call(first_reply)
-
-            final_response = first_reply
-
-            if tool_name:
-                tool_fn = self.available_tools.get(tool_name)
-                if not tool_fn:
-                    observation = f"Requested tool '{tool_name}' is not registered."
-                else:
-                    try:
-                        observation = tool_fn(**tool_args)
-                    except TypeError as exc:
-                        observation = f"Error executing tool '{tool_name}': {exc}"
-                    except Exception as exc:
-                        observation = f"Unexpected error in tool '{tool_name}': {exc}"
-
-                # Record intermediate reasoning and observation
-                self.memory.add_entry("assistant", first_reply)
-                self.memory.add_entry("tool", f"{tool_name} output: {observation}")
-
-                # Refresh context to include tool feedback before final answer
-                context_messages = self.memory.get_context_window(
-                    system_prompt=system_prompt,
-                    max_messages=10,
-                    summarizer=self.summarize_memory,
-                )
-                formatted_context = self._format_context_messages(context_messages)
-                follow_up_prompt = (
-                    f"{formatted_context}\n\n"
-                    f"Tool '{tool_name}' observation: {observation}\n"
-                    "Use the observation above to craft the final answer for the user. "
-                    "Do not request additional tool calls."
-                )
-                print(f"💬 Sending follow-up with observation from '{tool_name}'...")
-                final_response = self._call_gemini(follow_up_prompt)
-
-            self.memory.add_entry("assistant", final_response)
-            return final_response
-
-        except Exception as e:
-            response = f"Error generating response: {str(e)}"
-            print(f"❌ API Error: {e}")
-            return response
-
-    def reflect(self):
-        """
-        Review past actions to improve future performance.
-        """
-        history = self.memory.get_history()
-        print(f"Reflecting on {len(history)} past interactions...")
-
-    def run(self, task: str):
-        """Main entry point for the agent."""
-        print(f"🚀 Starting Task: {task}")
-        result = self.act(task)
-        print(f"📦 Result: {result}")
-        self.reflect()
-
-    def shutdown(self) -> None:
-        """
-        Gracefully shutdown the agent and cleanup resources.
-
-        This method should be called when the agent is no longer needed,
-        especially when MCP integration is enabled to properly close
-        server connections.
-        """
-        if self.mcp_manager:
-            print("🔌 Shutting down MCP connections...")
-            self.mcp_manager.shutdown()
-        print("👋 Agent shutdown complete.")
-
-    def get_mcp_status(self) -> Dict[str, Any]:
-        """
-        Get the status of MCP integration.
-
-        Returns:
-            Dictionary with MCP status information including:
-            - enabled: Whether MCP is enabled in settings
-            - initialized: Whether MCP manager is initialized
-            - servers: Status of each connected server
-        """
-        if not self.mcp_manager:
-            return {
-                "enabled": self.settings.MCP_ENABLED,
-                "initialized": False,
-                "servers": {},
-            }
-        return self.mcp_manager.get_status()
-
-
-if __name__ == "__main__":
-    # Allow overriding the task via CLI args or AGENT_TASK env var
-    task = " ".join(sys.argv[1:]).strip() or os.environ.get(
-        "AGENT_TASK", "帮助我查看今天的天气"
+}
+
+# --- FUNCȚII AUXILIARE ---
+def clean_html_for_markdown(text):
+    text = text.replace('<div class="feedback-box">', '\n> **🔍 FEEDBACK:**\n> ')
+    text = text.replace('</div>', '\n')
+    text = text.replace('<div class="roleplay-box">', '\n')
+    return text
+
+def get_transcript():
+    scenario = st.session_state.get("last_scenario", "Necunoscut")
+    transcript = f"# Antigravity Tutor Session\n"
+    transcript += f"**Scenariu:** {scenario}\n"
+    transcript += f"**Model:** {MODEL_NAME}\n\n---\n\n"
+    for msg in st.session_state.messages:
+        role = "🤖 AI" if msg["role"] == "assistant" else "👤 TU"
+        content = clean_html_for_markdown(msg["content"])
+        transcript += f"### {role}:\n{content}\n\n"
+    return transcript
+
+# --- INTERFAȚA GRAFICĂ & INIȚIALIZARE ---
+st.set_page_config(page_title="Antigravity Tutor", page_icon="🪐", layout="wide")
+st.title("🪐 Antigravity English Tutor")
+
+st.markdown("""
+<style>
+    .feedback-box {
+        background-color: #262730;
+        border-left: 5px solid #ff4b4b;
+        padding: 15px;
+        margin-bottom: 10px;
+        border-radius: 5px;
+    }
+    .roleplay-box {
+        font-size: 1.1em;
+        font-weight: 500;
+        margin-top: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# 1. INIȚIALIZARE VARIABILE (Safety First)
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "last_processed_audio" not in st.session_state:
+    st.session_state.last_processed_audio = None
+if "last_scenario" not in st.session_state:
+    st.session_state.last_scenario = list(SCENARIOS.keys())[0]
+if "chat_session" not in st.session_state:
+    st.session_state.chat_session = None
+
+# 2. SIDEBAR
+with st.sidebar:
+    st.header("⚙️ Setări")
+    
+    selected_scenario_name = st.selectbox(
+        "Alege Scenariul:", 
+        list(SCENARIOS.keys()), 
+        key="selected_scenario",
+        index=list(SCENARIOS.keys()).index(st.session_state.last_scenario) if st.session_state.last_scenario in SCENARIOS else 0
+    )
+    
+    if st.button("🔄 Sesiune Nouă"):
+        st.session_state.messages = []
+        st.session_state.chat_session = None
+        st.session_state.last_processed_audio = None
+        st.rerun()
+    
+    st.divider()
+    st.header("📊 Export & Raport")
+    
+    transcript_txt = get_transcript()
+    st.download_button(
+        label="💾 Descarcă Sesiunea (.md)",
+        data=transcript_txt,
+        file_name="english_session.md",
+        mime="text/markdown"
     )
 
-    agent = GeminiAgent()
+# 3. LOGICA SCHIMBARE SCENARIU
+if st.session_state.last_scenario != selected_scenario_name:
+    st.session_state.messages = []
+    st.session_state.chat_session = None
+    st.session_state.last_processed_audio = None
+    st.session_state.last_scenario = selected_scenario_name
+    st.rerun()
+
+# 4. START CHAT ENGINE
+if st.session_state.chat_session is None:
+    model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=SCENARIOS[selected_scenario_name])
+    st.session_state.chat_session = model.start_chat(history=[])
     try:
-        agent.run(task)
-    finally:
-        agent.shutdown()
+        initial = st.session_state.chat_session.send_message("Start the roleplay now with your opening line.")
+        st.session_state.messages.append({"role": "assistant", "content": initial.text})
+    except:
+        pass
+
+# 5. AFIȘARE ISTORIC
+chat_container = st.container()
+with chat_container:
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            content = msg["content"]
+            if "**🔍 Feedback:**" in content or "[FEEDBACK:" in content:
+                parts = content.split("**🗣️ Sarah:**") 
+                if len(parts) > 1:
+                    st.markdown(f'<div class="feedback-box">{parts[0]}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="roleplay-box">🗣️ Sarah: {parts[1]}</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(content)
+            else:
+                st.markdown(content)
+
+# 6. ZONA DE INPUT (LOGICA FIXATĂ AICI)
+footer_container = st.container()
+with footer_container:
+    # A. ZONA DE RAPORT
+    if len(st.session_state.messages) > 2:
+        if st.button("📝 Generează Raport Final"):
+            with st.spinner("Analizăm..."):
+                try:
+                    report_prompt = """
+                    [SYSTEM OVERRIDE]
+                    STOP ROLEPLAY. Analyze conversation history.
+                    Output Markdown report:
+                    1. 🏆 Score (1-10) Grammar/Vocab.
+                    2. 🚨 Top 3 Recurring Mistakes.
+                    3. 💡 Actionable Tips.
+                    """
+                    response = st.session_state.chat_session.send_message(report_prompt)
+                    st.session_state.messages.append({"role": "assistant", "content": f"📊 **RAPORT:**\n\n{response.text}"})
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Eroare: {e}")
+
+    # B. INPUT WIDGETS
+    audio_val = st.audio_input("🎤")
+    text_val = st.chat_input("Scrie mesajul tău...")
+
+    user_message = None
+    is_audio = False
+    should_process = False
+
+    # --- LOGICA NOUĂ DE PRIORITIZARE ---
+    # 1. Verificăm dacă avem AUDIO NOU (ne-procesat încă)
+    has_new_audio = False
+    if audio_val:
+        if st.session_state.last_processed_audio != audio_val.file_id:
+            has_new_audio = True
+
+    if has_new_audio:
+        # Avem audio nou -> Prioritate Audio
+        user_message = audio_val
+        is_audio = True
+        should_process = True
+        st.session_state.last_processed_audio = audio_val.file_id
+    
+    elif text_val:
+        # NU avem audio nou -> Putem procesa textul
+        # (Chiar dacă există un fișier audio vechi în widget, îl ignorăm)
+        user_message = text_val
+        is_audio = False
+        should_process = True
+
+    # --- PROCESARE ---
+    if should_process and user_message:
+        with chat_container:
+            with st.chat_message("user"):
+                if is_audio: st.audio(user_message)
+                else: st.markdown(user_message)
+        
+        if not is_audio: st.session_state.messages.append({"role": "user", "content": user_message})
+        else: st.session_state.messages.append({"role": "user", "content": "🎤 *Audio Message*" })
+
+        try:
+            reminder_prompt = " (IMPORTANT: Analyze my grammar first, start response with '**🔍 Feedback:**', then '**🗣️ Sarah:**' for roleplay.)"
+            if is_audio:
+                blob = {"mime_type": user_message.type, "data": user_message.getvalue()}
+                response = st.session_state.chat_session.send_message(["Analyze audio english quality.", blob, reminder_prompt])
+            else:
+                response = st.session_state.chat_session.send_message(user_message + reminder_prompt)
+            
+            content = response.text
+            st.session_state.messages.append({"role": "assistant", "content": content})
+            st.rerun()
+
+        except Exception as e:
+             if "429" in str(e): st.warning("⏳ Prea multe mesaje.")
+             else: st.error(f"Eroare: {e}")

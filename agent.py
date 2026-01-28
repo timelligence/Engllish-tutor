@@ -1,27 +1,28 @@
 """
 Convenience entrypoint so `python agent.py` works from the repo root.
-
-You can pass the task via CLI args or the AGENT_TASK env var.
-Example:
-    python agent.py "帮我写一个快速排序算法"
+This script launches the Streamlit application located in src/agent.py.
 """
 import os
 import sys
-
-from src.agent import GeminiAgent
-
+import subprocess
 
 def main():
-    task = " ".join(sys.argv[1:]).strip() or os.environ.get(
-        "AGENT_TASK", "帮助我查看今天的天气"
-    )
+    # Use the current Python executable to run streamlit
+    # This prevents path issues and ensures we use the same venv
+    cmd = [sys.executable, "-m", "streamlit", "run", "src/agent.py"]
+    
+    # Pass along any additional arguments
+    if len(sys.argv) > 1:
+        cmd.extend(sys.argv[1:])
 
-    agent = GeminiAgent()
+    print(f"🚀 Launching Streamlit app: {' '.join(cmd)}")
     try:
-        agent.run(task)
-    finally:
-        agent.shutdown()
-
+        subprocess.run(cmd, check=True)
+    except KeyboardInterrupt:
+        print("\n👋 Exiting...")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Error running app: {e}")
+        sys.exit(e.returncode)
 
 if __name__ == "__main__":
     main()

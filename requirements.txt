@@ -1,4 +1,7 @@
-google-genai
+google-generativeai
+streamlit
+python-dotenv
+
 pydantic
 pydantic-settings
 python-dotenv
