@@ -594,6 +594,23 @@ hr { border-color: var(--border) !important; }
 .mission-title { color: var(--purple); font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
 .mission-text { color: var(--text); }
 
+/* ===== RESPONSIVE DESIGN ===== */
+@media (max-width: 768px) {
+    .game-header { padding: 16px 20px 12px; margin-bottom: 12px; }
+    .game-title { font-size: 1.3rem !important; }
+    .game-subtitle { font-size: 0.75rem; }
+    .stats-row { flex-wrap: wrap; }
+    .stat-box, .streak-box { flex: 1 1 45%; padding: 8px 4px; }
+    .feedback-box, .roleplay-box { padding: 10px 12px; font-size: 0.85em; }
+    .roleplay-box { font-size: 0.95em; }
+    .xp-container { padding: 10px 12px; }
+    .badge-item { font-size: 0.7em; padding: 4px 8px; }
+    .scenario-active { padding: 4px 12px; font-size: 0.75em; }
+    [data-testid="stSidebar"] { padding: 1rem 0.5rem; }
+    [data-testid="stChatMessage"] { padding: 2px !important; }
+    .badges-title { font-size: 0.9rem; }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
