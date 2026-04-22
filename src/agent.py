@@ -706,7 +706,10 @@ with st.sidebar:
     for key, badge in BADGES.items():
         earned = key in st.session_state.badges
         cls = "badge-item earned" if earned else "badge-item locked"
-        badge_html += f'<div class="{cls}" title="{badge[\"desc\"]}">{badge["icon"]} {badge["name"]}</div>'
+        desc = badge["desc"]
+        icon = badge["icon"]
+        name = badge["name"]
+        badge_html += f'<div class="{cls}" title="{desc}">{icon} {name}</div>'
     badge_html += '</div>'
     st.markdown(badge_html, unsafe_allow_html=True)
 
