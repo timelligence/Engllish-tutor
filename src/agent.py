@@ -761,7 +761,12 @@ if st.session_state.chat_session is None:
         initial = st.session_state.chat_session.send_message("Start the roleplay with your opening line. Be engaging and fun.")
         st.session_state.messages.append({"role": "assistant", "content": initial.text})
     except Exception as e:
-        st.error(f"Init error: {e}")
+        st.session_state.chat_session = None
+        if "429" in str(e) or "quota" in str(e).lower():
+            st.warning("⏳ Ai atins limita gratuită Google API. Te rog așteaptă 30 de secunde și apasă butonul RESET.")
+        else:
+            st.error(f"Eroare la inițializarea sesiunii: {e}")
+        st.stop()
 
 # --- NEW BADGE POPUP ---
 if st.session_state.new_badge:
