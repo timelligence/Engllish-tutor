@@ -608,7 +608,22 @@ with footer:
             st.rerun()
             
         except Exception as e:
-            if "429" in str(e):
-                st.warning("⏳ Prea multe mesaje. Așteaptă câteva secunde.")
+            # Revert UI messages
+            if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+                st.session_state.messages.pop()
+                
+            # Revert Gemini session history to avoid "400 Please ensure that the dialogue role alternates"
+            try:
+                if st.session_state.chat_session.history and getattr(st.session_state.chat_session.history[-1], "role", "") == "user":
+                    st.session_state.chat_session.history.pop()
+            except Exception:
+                pass
+                
+            # Revert audio processing state so the user can re-send the same audio
+            if is_audio:
+                st.session_state.last_processed_audio = None
+
+            if "429" in str(e) or "quota" in str(e).lower():
+                st.warning("⏳ Ai atins limita de mesaje (prea multe solicitări). Te rog așteaptă 30 de secunde și trimite mesajul din nou!")
             else:
-                st.error(f"Eroare: {e}")
+                st.error(f"Eroare la procesare: {e}")
