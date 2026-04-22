@@ -763,7 +763,7 @@ if st.session_state.chat_session is None:
     except Exception as e:
         st.session_state.chat_session = None
         if "429" in str(e) or "quota" in str(e).lower():
-            st.warning("⏳ Ai atins limita gratuită Google API. Te rog așteaptă 30 de secunde și apasă butonul RESET.")
+            st.warning("⏳ Ai atins limita de trafic a API-ului Google (Rate Limit / Quota). Te rog așteaptă câteva momente și apasă butonul RESET.")
         else:
             st.error(f"Eroare la inițializarea sesiunii: {e}")
         st.stop()
@@ -931,6 +931,6 @@ with footer:
                 st.session_state.last_processed_audio = None
 
             if "429" in str(e) or "quota" in str(e).lower():
-                st.warning("⏳ Ai atins limita de mesaje (prea multe solicitări). Te rog așteaptă 30 de secunde și trimite mesajul din nou!")
+                st.warning("⏳ Ai atins limita de mesaje (prea multe solicitări simultane). Te rog așteaptă câteva momente și trimite mesajul din nou!")
             else:
                 st.error(f"Eroare la procesare: {e}")
