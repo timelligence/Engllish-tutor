@@ -2,611 +2,910 @@ import os
 import google.generativeai as genai
 import streamlit as st
 from dotenv import load_dotenv
+import json
+import random
 
 # --- CONFIGURARE ---
 load_dotenv()
-api_key = os.getenv("GOOGLE_API_KEY")
-
+api_key = os.getenv("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY", "")
 if not api_key:
-    try:
-        api_key = st.secrets.get("GOOGLE_API_KEY")
-    except Exception:
-        pass
-
-if not api_key:
-    st.error("❌ EROARE: Lipsește GOOGLE_API_KEY din fișierul .env sau din .streamlit/secrets.toml")
+    st.error("❌ EROARE: Lipsește GOOGLE_API_KEY")
     st.stop()
 
 genai.configure(api_key=api_key)
 MODEL_NAME = 'gemini-2.0-flash'
 
-# --- SCENARII CRUISE SHIP ---
+# --- GAME CONFIG ---
+LEVELS = [
+    {"name": "🧹 Rookie Crew",       "min_xp": 0,    "color": "#7f8c8d"},
+    {"name": "⚓ Junior Staff",       "min_xp": 50,   "color": "#3498db"},
+    {"name": "🍽️ Trained Steward",   "min_xp": 150,  "color": "#2ecc71"},
+    {"name": "🎖️ Senior Officer",    "min_xp": 350,  "color": "#f39c12"},
+    {"name": "👑 Captain's Elite",   "min_xp": 700,  "color": "#e74c3c"},
+]
+
+BADGES = {
+    "first_message":    {"icon": "🎤", "name": "First Words",        "desc": "Primul mesaj trimis"},
+    "no_mistakes":      {"icon": "⭐", "name": "Flawless Round",     "desc": "Un răspuns fără greșeli"},
+    "5_turns":          {"icon": "🔥", "name": "On Fire",            "desc": "5 ture consecutive"},
+    "10_turns":         {"icon": "🚀", "name": "Cruise Veteran",     "desc": "10 ture completate"},
+    "audio_used":       {"icon": "🎙️", "name": "Voice Activated",   "desc": "Ai folosit vocea"},
+    "report_done":      {"icon": "📊", "name": "Self-Aware",         "desc": "Ai generat un raport"},
+    "all_scenarios":    {"icon": "🌊", "name": "Full Crew",          "desc": "Ai încercat toate scenariile"},
+}
+
+XP_REWARDS = {
+    "message_sent":   10,
+    "no_mistake":     25,
+    "audio_bonus":    15,
+    "streak_3":       20,
+    "streak_5":       40,
+}
+
 SCENARIOS = {
-    "🛍️ Shop Assistant – Duty Free": """
-        You are James, a senior shop assistant at the Duty Free boutique on a luxury cruise ship.
-        Your shop sells: perfumes, cosmetics, jewelry, spirits, chocolates, souvenirs, luxury watches.
+    "🛍️ Shop – Duty Free": {
+        "icon": "🛍️",
+        "char": "James",
+        "char_emoji": "🧑‍💼",
+        "difficulty": "⭐⭐",
+        "prompt": """
+        You are James, senior shop assistant at the Duty Free boutique on a luxury cruise ship.
+        Shop sells: perfumes, cosmetics, jewelry, spirits, chocolates, souvenirs, luxury watches.
+        Train Anamaria (new Eastern European crew) as shop assistant.
         
-        YOUR ROLE: Serve the user (Anamaria, a new Eastern European crew member) who is being trained as shop assistant.
-        SIMULATE real passenger interactions: browsing, asking about products, prices, discounts, gift ideas.
+        TEACHING RULES (MANDATORY every turn):
+        1. ALWAYS start with **🔍 Feedback:** block.
+        2. Identify grammar errors, wrong vocabulary, unnatural phrases.
+        3. Give corrected version + brief explanation.
+        4. Score the turn: award 0-3 stars based on English quality.
         
-        TEACHING RULES (MANDATORY every single turn):
-        1. ALWAYS start your reply with a [FEEDBACK] block analyzing her English.
-        2. In [FEEDBACK], identify: grammar errors, wrong vocabulary, unnatural phrases, missing words.
-        3. Give the CORRECTED version and explain WHY briefly.
-        4. Then continue the roleplay as James/a passenger.
-        
-        FEEDBACK FORMAT (use exactly this):
+        EXACT FORMAT:
         **🔍 Feedback:**
-        - ❌ She said: *"[exact quote]"*
+        - ❌ She said: *"[quote]"*
         - ✅ Better: *"[correction]"*
-        - 📖 Why: [brief explanation]
+        - 📖 Why: [explanation]
+        - 🌟 Stars: [★★★ or ★★☆ or ★☆☆ based on quality]
         
         **🛍️ James:** [continue roleplay]
         
-        OPENING LINE: "Welcome aboard, Anamaria! I'm James, your supervisor for Deck 5 Boutique. Before we open for passengers, let me show you around. First question — a passenger walks in and says they want 'something nice for their wife.' What do you say?"
+        OPENING: "Welcome aboard, Anamaria! I'm James, Deck 5 Boutique supervisor. First test — a passenger wants 'something nice for his wife.' What do you say?"
+        """,
+        "vocab": ["May I help you find something?", "This is one of our best sellers.", "Would you like to try a sample?", "I can gift-wrap that for you.", "Duty-free allowance", "We have a special offer on..."]
+    },
+    "🍽️ Waiter – Dining Room": {
+        "icon": "🍽️",
+        "char": "Marco",
+        "char_emoji": "👨‍🍳",
+        "difficulty": "⭐⭐⭐",
+        "prompt": """
+        You are Marco, Head Waiter in the Main Dining Room on a 5-star cruise ship.
+        Formal dinners, 4-course menu, smart casual to formal dress code.
+        Train Anamaria, new waitress from Romania.
         
-        SCENARIOS TO SIMULATE:
-        - Passenger asks for gift recommendations
-        - Upselling perfumes / explaining notes (floral, woody, oriental)
-        - Handling a complaint about a broken item
-        - Explaining duty-free allowances
-        - Processing a return
-        - Passenger haggles for a discount
-        - Describing a watch to an interested buyer
-    """,
-
-    "🍽️ Waiter – Main Dining Room": """
-        You are Chef Marco, the Head Waiter of the Main Dining Room on a 5-star cruise ship.
-        The restaurant serves formal dinners with a 4-course menu. Dress code is smart casual to formal.
+        TEACHING RULES (MANDATORY every turn):
+        1. ALWAYS start with **🔍 Feedback:** block.
+        2. Check grammar, pronunciation (phonetics if needed), wrong word choice, missing articles.
+        3. Focus on formal restaurant vocabulary and speech registers.
+        4. Score the turn: award stars.
         
-        YOUR ROLE: Train Anamaria, a new waitress from Romania, through realistic passenger service scenarios.
-        
-        TEACHING RULES (MANDATORY every single turn):
-        1. ALWAYS start your reply with a [FEEDBACK] block.
-        2. Check: grammar, pronunciation notes (written phonetics if needed), wrong word choice, missing articles/prepositions.
-        3. Pay special attention to restaurant-specific vocabulary and formal speech registers.
-        4. Then continue roleplay as Marco or as a demanding passenger.
-        
-        FEEDBACK FORMAT (use exactly this):
+        EXACT FORMAT:
         **🔍 Feedback:**
-        - ❌ She said: *"[exact quote]"*
+        - ❌ She said: *"[quote]"*
         - ✅ Better: *"[correction]"*
-        - 📖 Why: [brief explanation]
+        - 📖 Why: [explanation]
+        - 🌟 Stars: [★★★ or ★★☆ or ★☆☆]
         
         **🍽️ Marco:** [continue roleplay]
         
-        OPENING LINE: "Buonasera, Anamaria! I'm Marco, I run this dining room like a Swiss watch. Tonight you shadow me. First lesson — a couple arrives at their table. Go ahead, greet them properly. What do you say?"
+        OPENING: "Buonasera, Anamaria! I'm Marco. Tonight you shadow me. A couple just arrived at their table — greet them properly. Go!"
+        """,
+        "vocab": ["May I take your order?", "Would you care for...?", "The chef recommends...", "I do apologize for the inconvenience.", "Rare / medium / well-done", "Allergens / dietary requirements"]
+    },
+    "🍹 Bartender – Pool Bar": {
+        "icon": "🍹",
+        "char": "Jake",
+        "char_emoji": "🧑‍🍳",
+        "difficulty": "⭐",
+        "prompt": """
+        You are Jake, Head Bartender at the Lido Pool Bar. Relaxed, fun, international atmosphere.
+        Train Anamaria in casual conversational English for bar work.
         
-        SCENARIOS TO SIMULATE:
-        - Greeting guests and presenting menus
-        - Taking orders (mains, allergies, wine pairings)
-        - Explaining dishes: ingredients, preparation method, origin
-        - Handling a complaint: wrong order, food too cold, long wait
-        - Suggesting desserts and after-dinner drinks
-        - Formal phrases: "May I take your order?", "Would you care for...?", "I do apologize..."
-        - Dealing with a very rude/demanding guest
-        - Clearing table between courses
-    """,
-
-    "🍹 Bartender – Pool Bar": """
-        You are Jake, the Head Bartender at the Lido Pool Bar — the most social spot on the ship.
-        The atmosphere is relaxed, fun, international. Guests are on holiday and in a good mood.
+        TEACHING RULES (MANDATORY every turn):
+        1. ALWAYS start with **🔍 Feedback:** block.
+        2. Focus on casual speech, filler phrases, drink names pronunciation.
+        3. Score the turn: award stars.
         
-        YOUR ROLE: Train Anamaria, new bar crew, in real bar interactions and casual conversational English.
-        This scenario focuses on CASUAL, FRIENDLY English — very different from the formal dining room.
-        
-        TEACHING RULES (MANDATORY every single turn):
-        1. ALWAYS start your reply with a [FEEDBACK] block.
-        2. Focus on: natural casual speech, filler phrases ("Sure thing!", "Coming right up!", "You bet!"),
-           correct use of "Can I get you...?" vs "What would you like?", pronunciation of drink names.
-        3. Then continue as Jake or simulate a fun/chatty passenger.
-        
-        FEEDBACK FORMAT (use exactly this):
+        EXACT FORMAT:
         **🔍 Feedback:**
-        - ❌ She said: *"[exact quote]"*
+        - ❌ She said: *"[quote]"*
         - ✅ Better: *"[correction]"*
-        - 📖 Why: [brief explanation]
+        - 📖 Why: [explanation]
+        - 🌟 Stars: [★★★ or ★★☆ or ★☆☆]
         
         **🍹 Jake:** [continue roleplay]
         
-        OPENING LINE: "Hey! Welcome to the best office on the ship — the pool bar! I'm Jake. Sun's out, passengers are thirsty, and you're on shift with me. Ready? Here comes your first customer. I'll play them — you serve. Go!"
+        OPENING: "Hey! Best office on the ship — the pool bar! I'm Jake. First customer incoming — you serve. Go!"
+        """,
+        "vocab": ["Coming right up!", "What can I get for you?", "On the rocks / straight up / neat", "Would you like to start a tab?", "Our special today is...", "Cheers! / Enjoy!"]
+    },
+    "🛎️ Guest Services": {
+        "icon": "🛎️",
+        "char": "Patricia",
+        "char_emoji": "👩‍💼",
+        "difficulty": "⭐⭐⭐",
+        "prompt": """
+        You are Patricia, Senior Guest Services Officer at the Information Desk.
+        Handle: ports, excursions, complaints, lost & found, emergencies, room issues.
+        Train Anamaria — formal, professional English + empathy required.
         
-        SCENARIOS TO SIMULATE:
-        - Taking drink orders at the bar
-        - Explaining cocktail menu / making recommendations
-        - Making small talk with passengers (where are you from, enjoying the cruise?)
-        - Handling a passenger who's had too much to drink (diplomatically cut off)
-        - Learning drink names and how to pronounce them
-        - Upselling premium spirits
-        - Explaining daily drink specials
-        - Closing tabs and card payments
-    """,
-
-    "🚢 Guest Services – Information Desk": """
-        You are Patricia, Senior Guest Services Officer at the Information Desk on a cruise ship.
-        You handle: questions about ports, excursions, complaints, lost & found, emergencies, room issues.
+        TEACHING RULES (MANDATORY every turn):
+        1. ALWAYS start with **🔍 Feedback:** block.
+        2. Focus on professional tone, empathy language, formal register.
+        3. Score the turn: award stars.
         
-        YOUR ROLE: Train Anamaria who just joined Guest Services. This role requires FORMAL, PROFESSIONAL English
-        and EMPATHY — guests come here when they have problems.
-        
-        TEACHING RULES (MANDATORY every single turn):
-        1. ALWAYS start your reply with a [FEEDBACK] block.
-        2. Focus on: professional tone, empathy language ("I completely understand...", "I sincerely apologize..."),
-           formal vs informal register, correct use of "I'm afraid...", "Unfortunately...", "Allow me to..."
-        3. Note any pronunciation issues phonetically.
-        4. Then continue as Patricia or as a stressed/upset passenger.
-        
-        FEEDBACK FORMAT (use exactly this):
+        EXACT FORMAT:
         **🔍 Feedback:**
-        - ❌ She said: *"[exact quote]"*
+        - ❌ She said: *"[quote]"*
         - ✅ Better: *"[correction]"*
-        - 📖 Why: [brief explanation]
+        - 📖 Why: [explanation]
+        - 🌟 Stars: [★★★ or ★★☆ or ★☆☆]
         
         **🛎️ Patricia:** [continue roleplay]
         
-        OPENING LINE: "Good morning, Anamaria. Welcome to Guest Services — the heart of this ship. Our job is simple: every guest leaves this desk feeling heard and helped. Ready for your first interaction? A passenger is walking toward us. She looks upset. Go ahead — greet her."
+        OPENING: "Good morning, Anamaria. Welcome to Guest Services. An upset passenger is approaching — greet her."
+        """,
+        "vocab": ["I completely understand your concern.", "Allow me to look into that for you.", "I sincerely apologize for the inconvenience.", "I'm afraid...", "Shore excursion / tender port", "Embarkation / disembarkation"]
+    },
+    "🎯 HR Interview": {
+        "icon": "🎯",
+        "char": "Richard",
+        "char_emoji": "👔",
+        "difficulty": "⭐⭐⭐⭐",
+        "prompt": """
+        You are Richard, Recruitment Officer at a major cruise line (Royal Caribbean / MSC level).
+        Final interview for Anamaria for a hospitality position.
         
-        SCENARIOS TO SIMULATE:
-        - Answering questions about port excursions and shore leave times
-        - Handling lost luggage or lost items
-        - Dealing with a billing dispute
-        - Medical emergency — directing to medical center calmly
-        - Room complaints (noise, AC, cleanliness)
-        - Explaining ship safety procedures
-        - Booking specialty restaurants
-    """,
-
-    "🎯 Mock Test – Job Interview (Cruise Line HR)": """
-        You are Richard, Recruitment Officer at a major cruise line (think Royal Caribbean / MSC level).
-        You are conducting a final interview for Anamaria for a hospitality position on board.
+        TEACHING RULES (MANDATORY every turn):
+        1. ALWAYS start with **🔍 Feedback:** block.
+        2. Focus on interview language, confident phrasing, STAR method.
+        3. Rate: Language score + Answer quality score out of 5.
         
-        YOUR ROLE: Ask real interview questions, evaluate her answers, correct her English in real-time.
-        Be professional but warm. This is HIGH STAKES — she needs to perform well.
-        
-        TEACHING RULES (MANDATORY every single turn):
-        1. ALWAYS start your reply with a [FEEDBACK] block.
-        2. Focus on: interview-specific language ("I believe my strengths are...", "In my previous role..."),
-           confident vs weak phrasing, hedging language, answer structure (STAR method hints).
-        3. Rate her answer: star out of 5 for Language Quality + star out of 5 for Answer Quality.
-        4. Then ask the next interview question.
-        
-        FEEDBACK FORMAT (use exactly this):
+        EXACT FORMAT:
         **🔍 Feedback:**
-        - ❌ She said: *"[exact quote]"*
+        - ❌ She said: *"[quote]"*
         - ✅ Better: *"[correction]"*
-        - 📖 Why: [brief explanation]
-        - 🌟 Score: Language [X/5] | Answer Quality [X/5]
+        - 📖 Why: [explanation]
+        - 🌟 Stars: [★★★ or ★★☆ or ★☆☆]
+        - 📈 Language [X/5] | Answer [X/5]
         
-        **👔 Richard:** [next question or comment]
+        **👔 Richard:** [next question]
         
-        OPENING LINE: "Good morning, Anamaria! Thank you for joining us today. My name is Richard, and I'll be your interviewer. We have about 20 minutes together. I've reviewed your CV — lovely background. Let's start simply: Could you tell me a little about yourself and why you'd like to work on a cruise ship?"
-        
-        QUESTION BANK TO COVER:
-        - Tell me about yourself
-        - Why do you want to work on a cruise ship?
-        - How do you handle difficult customers?
-        - Describe a time you worked under pressure
-        - How do you feel about being away from home for 6-8 months?
-        - What languages do you speak?
-        - Where do you see yourself in 2 years?
-        - What would you do if a colleague was rude to a guest?
-        - Are you comfortable with a strict uniform and grooming policy?
-        - Do you have any questions for me?
-    """
+        OPENING: "Good morning, Anamaria! I'm Richard. Could you tell me about yourself and why you'd like to work on a cruise ship?"
+        """,
+        "vocab": ["I believe my strengths are...", "In my previous experience...", "I thrive under pressure.", "I'm a quick learner.", "Customer satisfaction is my priority.", "I'm eager to grow with the company."]
+    },
 }
 
-# --- VOCABULAR UTIL PER SCENARIU ---
-VOCAB_TIPS = {
-    "🛍️ Shop Assistant – Duty Free": [
-        "**May I help you find something?**",
-        "**We have a special offer on...**",
-        "**This is one of our best sellers.**",
-        "**Would you like to try a sample?**",
-        "**I can gift-wrap that for you.**",
-        "**Duty-free allowance**",
-        "**Receipt / invoice**",
-    ],
-    "🍽️ Waiter – Main Dining Room": [
-        "**May I take your order?**",
-        "**Would you care for...?**",
-        "**The chef recommends...**",
-        "**I do apologize for the inconvenience.**",
-        "**Your table is ready, sir/madam.**",
-        "**Rare / medium / well-done**",
-        "**Allergens / dietary requirements**",
-    ],
-    "🍹 Bartender – Pool Bar": [
-        "**Coming right up!**",
-        "**What can I get for you?**",
-        "**On the rocks / straight up / neat**",
-        "**Would you like to start a tab?**",
-        "**That's your last one, buddy.**",
-        "**Our special today is...**",
-        "**Cheers! / Enjoy!**",
-    ],
-    "🚢 Guest Services – Information Desk": [
-        "**I completely understand your concern.**",
-        "**Allow me to look into that for you.**",
-        "**I sincerely apologize for the inconvenience.**",
-        "**I'm afraid...**",
-        "**Let me connect you with the right department.**",
-        "**Shore excursion / tender port**",
-        "**Embarkation / disembarkation**",
-    ],
-    "🎯 Mock Test – Job Interview (Cruise Line HR)": [
-        "**I believe my strengths are...**",
-        "**In my previous experience...**",
-        "**I'm comfortable working in a multicultural environment.**",
-        "**I thrive under pressure.**",
-        "**I'm a quick learner.**",
-        "**Customer satisfaction is my priority.**",
-        "**I'm eager to grow with the company.**",
-    ],
-}
+# --- FUNCȚII GAME ---
+def get_level(xp):
+    current = LEVELS[0]
+    for lvl in LEVELS:
+        if xp >= lvl["min_xp"]:
+            current = lvl
+    return current
 
-# --- FUNCȚII AUXILIARE ---
-def clean_html_for_markdown(text):
-    text = text.replace('<div class="feedback-box">', '\n> **🔍 FEEDBACK:**\n> ')
-    text = text.replace('</div>', '\n')
-    text = text.replace('<div class="roleplay-box">', '\n')
-    return text
+def get_next_level(xp):
+    for i, lvl in enumerate(LEVELS):
+        if xp < lvl["min_xp"]:
+            return lvl, LEVELS[i-1]["min_xp"] if i > 0 else 0
+    return None, LEVELS[-1]["min_xp"]
 
-def get_transcript():
-    scenario = st.session_state.get("last_scenario", "Necunoscut")
-    transcript = f"# 🚢 Cruise Ship English Training — Anamaria\n"
-    transcript += f"**Scenariu:** {scenario}\n"
-    transcript += f"**Model:** {MODEL_NAME}\n\n---\n\n"
-    for msg in st.session_state.messages:
-        role = "🤖 Trainer" if msg["role"] == "assistant" else "👩 Anamaria"
-        content = clean_html_for_markdown(msg["content"])
-        transcript += f"### {role}:\n{content}\n\n"
-    return transcript
+def xp_to_next(xp):
+    next_lvl, prev_min = get_next_level(xp)
+    if not next_lvl:
+        return 100, 100
+    total = next_lvl["min_xp"] - prev_min
+    progress = xp - prev_min
+    return progress, total
+
+def award_xp(amount, reason=""):
+    st.session_state.xp += amount
+    st.session_state.xp_log.append(f"+{amount} XP — {reason}")
+    if len(st.session_state.xp_log) > 5:
+        st.session_state.xp_log.pop(0)
+
+def award_badge(badge_key):
+    if badge_key not in st.session_state.badges:
+        st.session_state.badges.append(badge_key)
+        st.session_state.new_badge = badge_key
+
+def count_stars_in_response(text):
+    if "★★★" in text:
+        return 3
+    elif "★★☆" in text:
+        return 2
+    elif "★☆☆" in text:
+        return 1
+    return 1
 
 def count_turns():
-    user_msgs = [m for m in st.session_state.messages if m["role"] == "user"]
-    return len(user_msgs)
+    return len([m for m in st.session_state.messages if m["role"] == "user"])
 
-# --- INTERFAȚA GRAFICĂ ---
-st.set_page_config(page_title="Cruise English Trainer", page_icon="🚢", layout="wide")
+def get_transcript():
+    lines = [f"# 🚢 Cruise English Training — Anamaria\n**Scenariu:** {st.session_state.last_scenario}\n\n---\n\n"]
+    for msg in st.session_state.messages:
+        role = "🤖 Trainer" if msg["role"] == "assistant" else "👩 Anamaria"
+        lines.append(f"### {role}:\n{msg['content']}\n\n")
+    return "".join(lines)
 
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Cruise Trainer 🚢", page_icon="🚢", layout="wide")
+
+# --- MEGA CSS ---
 st.markdown("""
 <style>
-    [data-testid="stAppViewContainer"] {
-        background: #0a0f1e;
-        color: #e8eaf0;
-    }
-    [data-testid="stSidebar"] {
-        background: #0d1425;
-        border-right: 1px solid #1e2d4a;
-    }
-    .cruise-header {
-        background: linear-gradient(135deg, #0a1628 0%, #0d2347 50%, #0a1628 100%);
-        border: 1px solid #1e3a5f;
-        border-radius: 16px;
-        padding: 24px 32px;
-        margin-bottom: 24px;
-        position: relative;
-        overflow: hidden;
-    }
-    .cruise-header::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background: repeating-linear-gradient(
-            45deg, transparent, transparent 40px,
-            rgba(30,90,150,0.03) 40px, rgba(30,90,150,0.03) 80px
-        );
-    }
-    .cruise-header h1 { font-size: 1.8rem; font-weight: 700; color: #ffffff; margin: 0 0 6px 0; }
-    .cruise-header p { color: #7090b0; margin: 0; font-size: 0.9rem; }
-    .feedback-box {
-        background: linear-gradient(135deg, #0f1e35, #111d30);
-        border-left: 4px solid #e85555;
-        border-radius: 0 12px 12px 0;
-        padding: 16px 20px;
-        margin: 8px 0 12px 0;
-        font-size: 0.92em;
-    }
-    .roleplay-box {
-        background: linear-gradient(135deg, #0a1e10, #0d2216);
-        border-left: 4px solid #2ecc71;
-        border-radius: 0 12px 12px 0;
-        padding: 16px 20px;
-        margin: 4px 0;
-        font-size: 1.05em;
-        font-weight: 500;
-    }
-    .progress-container {
-        background: #111d30;
-        border-radius: 8px;
-        padding: 12px 16px;
-        margin: 8px 0;
-        border: 1px solid #1e3a5f;
-    }
-    .progress-bar-bg { background: #1a2840; border-radius: 4px; height: 8px; margin-top: 6px; }
-    .progress-bar-fill { background: linear-gradient(90deg, #2563eb, #3b82f6); height: 8px; border-radius: 4px; }
-    .vocab-card {
-        background: #111d30;
-        border: 1px solid #1e3a5f;
-        border-radius: 10px;
-        padding: 10px 14px;
-        margin: 5px 0;
-        font-size: 0.85em;
-        color: #a8c4e0;
-    }
-    .scenario-badge {
-        display: inline-block;
-        background: linear-gradient(135deg, #1a2840, #0d1929);
-        border: 1px solid #2563eb;
-        color: #60a5fa;
-        border-radius: 20px;
-        padding: 4px 14px;
-        font-size: 0.82em;
-        font-weight: 600;
-        letter-spacing: 0.5px;
-    }
-    .tips-header {
-        color: #60a5fa;
-        font-size: 0.8em;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        margin: 12px 0 6px 0;
-    }
-    [data-testid="stChatMessage"] {
-        background: #0d1929 !important;
-        border-radius: 12px !important;
-        border: 1px solid #1a2e45 !important;
-        margin-bottom: 8px !important;
-    }
-    .stButton button {
-        background: linear-gradient(135deg, #1a3a6e, #1e4a8a) !important;
-        color: #ffffff !important;
-        border: 1px solid #2563eb !important;
-        border-radius: 8px !important;
-        font-weight: 500 !important;
-    }
-    hr { border-color: #1e3a5f !important; }
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@300;400;600;700&display=swap');
+
+:root {
+    --bg-deep:    #050a18;
+    --bg-card:    #0a1428;
+    --bg-panel:   #0d1e35;
+    --cyan:       #00f5ff;
+    --gold:       #ffd700;
+    --green:      #00ff88;
+    --red:        #ff4757;
+    --purple:     #a855f7;
+    --border:     #1a3a5c;
+    --text:       #c8d8f0;
+    --text-dim:   #4a6a8a;
+}
+
+* { font-family: 'Exo 2', sans-serif !important; }
+
+[data-testid="stAppViewContainer"] {
+    background: var(--bg-deep) !important;
+    background-image: 
+        radial-gradient(ellipse at 20% 20%, rgba(0,245,255,0.04) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 80%, rgba(168,85,247,0.04) 0%, transparent 50%),
+        repeating-linear-gradient(0deg, transparent, transparent 80px, rgba(26,58,92,0.15) 80px, rgba(26,58,92,0.15) 81px),
+        repeating-linear-gradient(90deg, transparent, transparent 80px, rgba(26,58,92,0.15) 80px, rgba(26,58,92,0.15) 81px) !important;
+    color: var(--text) !important;
+}
+
+[data-testid="stSidebar"] {
+    background: #060d1a !important;
+    border-right: 1px solid var(--border) !important;
+}
+
+/* ===== HEADER ===== */
+.game-header {
+    background: linear-gradient(135deg, #060d1a 0%, #0a1628 40%, #06152a 100%);
+    border: 1px solid var(--border);
+    border-top: 2px solid var(--cyan);
+    border-radius: 0 0 20px 20px;
+    padding: 20px 28px 16px;
+    margin-bottom: 20px;
+    position: relative;
+    overflow: hidden;
+}
+.game-header::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--cyan), var(--purple), var(--cyan), transparent);
+    animation: scanline 3s linear infinite;
+}
+@keyframes scanline {
+    0% { opacity: 0.3; } 50% { opacity: 1; } 100% { opacity: 0.3; }
+}
+.game-title {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 1.6rem !important;
+    font-weight: 900 !important;
+    color: #fff !important;
+    letter-spacing: 2px !important;
+    text-shadow: 0 0 20px rgba(0,245,255,0.5) !important;
+    margin: 0 0 4px !important;
+}
+.game-subtitle { color: var(--text-dim); font-size: 0.85rem; }
+.game-subtitle strong { color: var(--cyan); }
+
+/* ===== XP BAR ===== */
+.xp-container {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin: 8px 0;
+}
+.xp-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+.level-name {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 0.72rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 1px !important;
+    color: var(--gold) !important;
+    text-shadow: 0 0 10px rgba(255,215,0,0.4);
+}
+.xp-count { font-size: 0.75rem; color: var(--cyan); font-weight: 600; }
+.xp-bar-bg {
+    background: #0a1628;
+    border-radius: 6px;
+    height: 10px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+.xp-bar-fill {
+    height: 10px;
+    border-radius: 6px;
+    background: linear-gradient(90deg, #00b4d8, #00f5ff, #7fffce);
+    box-shadow: 0 0 12px rgba(0,245,255,0.6);
+    transition: width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+    position: relative;
+}
+.xp-bar-fill::after {
+    content: '';
+    position: absolute;
+    top: 0; right: 0;
+    width: 20px; height: 100%;
+    background: rgba(255,255,255,0.4);
+    border-radius: 6px;
+    animation: shimmer 1.5s ease infinite;
+}
+@keyframes shimmer { 0%,100% { opacity: 0; } 50% { opacity: 1; } }
+
+/* ===== STATS ROW ===== */
+.stats-row {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0;
+}
+.stat-box {
+    flex: 1;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 8px;
+    text-align: center;
+}
+.stat-value {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 1.2rem !important;
+    font-weight: 700 !important;
+    color: var(--cyan) !important;
+    display: block;
+    line-height: 1;
+}
+.stat-label { font-size: 0.65rem; color: var(--text-dim); margin-top: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* ===== STREAK FIRE ===== */
+.streak-box {
+    background: linear-gradient(135deg, #1a0a00, #2a1200);
+    border: 1px solid #ff6b35;
+    border-radius: 10px;
+    padding: 10px 8px;
+    text-align: center;
+}
+.streak-value {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 1.2rem !important;
+    font-weight: 700 !important;
+    color: #ff9f43 !important;
+    display: block;
+    text-shadow: 0 0 10px rgba(255,159,67,0.5);
+}
+
+/* ===== BADGES ===== */
+.badges-section { margin: 10px 0; }
+.badges-title {
+    font-size: 0.72rem;
+    color: var(--gold);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+}
+.badges-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.badge-item {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.78em;
+    color: var(--text);
+    cursor: default;
+}
+.badge-item.earned {
+    background: linear-gradient(135deg, #1a1400, #2a2200);
+    border-color: var(--gold);
+    color: var(--gold);
+    box-shadow: 0 0 8px rgba(255,215,0,0.2);
+}
+.badge-item.locked { opacity: 0.3; filter: grayscale(1); }
+
+/* ===== NEW BADGE POPUP ===== */
+.badge-popup {
+    background: linear-gradient(135deg, #1a1200, #2d1f00);
+    border: 2px solid var(--gold);
+    border-radius: 14px;
+    padding: 16px 20px;
+    text-align: center;
+    animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 0 30px rgba(255,215,0,0.3);
+}
+@keyframes popIn {
+    from { transform: scale(0.5); opacity: 0; }
+    to   { transform: scale(1);   opacity: 1; }
+}
+
+/* ===== XP POPUP ===== */
+.xp-popup {
+    background: linear-gradient(135deg, #001a1a, #002a2a);
+    border: 1px solid var(--cyan);
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin: 6px 0;
+    font-size: 0.85em;
+    color: var(--cyan);
+    animation: slideIn 0.3s ease;
+}
+@keyframes slideIn { from { transform: translateX(-10px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ===== SCENARIO CARDS ===== */
+.scenario-active {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, #001a2a, #002a3a);
+    border: 1px solid var(--cyan);
+    border-radius: 20px;
+    padding: 6px 16px;
+    font-size: 0.82em;
+    font-weight: 700;
+    color: var(--cyan);
+    letter-spacing: 0.5px;
+    box-shadow: 0 0 15px rgba(0,245,255,0.15);
+    margin-bottom: 12px;
+}
+
+/* ===== VOCAB CHIPS ===== */
+.vocab-section-title { font-size: 0.72rem; color: var(--purple); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin: 10px 0 6px; }
+.vocab-chip {
+    background: linear-gradient(135deg, #100a28, #1a1040);
+    border: 1px solid #3a2a6a;
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin: 4px 0;
+    font-size: 0.82em;
+    color: #c8b4f0;
+}
+
+/* ===== CHAT MESSAGES ===== */
+[data-testid="stChatMessage"] {
+    background: var(--bg-card) !important;
+    border-radius: 14px !important;
+    border: 1px solid var(--border) !important;
+    margin-bottom: 10px !important;
+    padding: 4px !important;
+}
+
+/* ===== FEEDBACK & ROLEPLAY ===== */
+.feedback-box {
+    background: linear-gradient(135deg, #1a0608, #2a0810);
+    border-left: 4px solid var(--red);
+    border-radius: 0 12px 12px 0;
+    padding: 14px 18px;
+    margin: 6px 0 10px;
+    font-size: 0.9em;
+    box-shadow: inset 0 0 20px rgba(255,71,87,0.05);
+}
+.roleplay-box {
+    background: linear-gradient(135deg, #001a0e, #002a16);
+    border-left: 4px solid var(--green);
+    border-radius: 0 12px 12px 0;
+    padding: 14px 18px;
+    margin: 4px 0;
+    font-size: 1.05em;
+    font-weight: 500;
+    box-shadow: inset 0 0 20px rgba(0,255,136,0.03);
+}
+
+/* ===== STARS DISPLAY ===== */
+.stars-earned {
+    display: inline-block;
+    background: linear-gradient(135deg, #1a1400, #2a2000);
+    border: 1px solid var(--gold);
+    border-radius: 20px;
+    padding: 4px 14px;
+    font-size: 1.1em;
+    color: var(--gold);
+    box-shadow: 0 0 10px rgba(255,215,0,0.2);
+    margin-top: 8px;
+}
+
+/* ===== BUTTONS ===== */
+.stButton button {
+    background: linear-gradient(135deg, #0a2040, #0d2a55) !important;
+    color: var(--cyan) !important;
+    border: 1px solid var(--cyan) !important;
+    border-radius: 8px !important;
+    font-weight: 700 !important;
+    font-size: 0.8rem !important;
+    letter-spacing: 0.5px !important;
+    transition: all 0.2s !important;
+    text-transform: uppercase !important;
+}
+.stButton button:hover {
+    background: linear-gradient(135deg, #00f5ff22, #00f5ff33) !important;
+    box-shadow: 0 0 15px rgba(0,245,255,0.3) !important;
+}
+
+/* ===== SELECTBOX ===== */
+[data-testid="stSelectbox"] > div > div {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+    border-radius: 8px !important;
+}
+
+/* ===== CHAT INPUT ===== */
+[data-testid="stChatInput"] textarea {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+    border-radius: 12px !important;
+}
+[data-testid="stChatInput"] textarea:focus {
+    border-color: var(--cyan) !important;
+    box-shadow: 0 0 0 1px var(--cyan) !important;
+}
+
+hr { border-color: var(--border) !important; }
+
+/* ===== DIFFICULTY DOTS ===== */
+.diff-label { font-size: 0.72rem; color: var(--text-dim); margin-bottom: 2px; }
+
+/* ===== DOWNLOAD BUTTON ===== */
+[data-testid="stDownloadButton"] button {
+    background: linear-gradient(135deg, #0a2000, #0d2800) !important;
+    color: var(--green) !important;
+    border-color: var(--green) !important;
+}
+
+/* ===== MISSION BAR ===== */
+.mission-bar {
+    background: var(--bg-panel);
+    border: 1px solid #2a1a4a;
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin: 8px 0;
+    font-size: 0.8em;
+}
+.mission-title { color: var(--purple); font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.mission-text { color: var(--text); }
+
 </style>
 """, unsafe_allow_html=True)
 
+# --- STATE INIT ---
+if "messages"              not in st.session_state: st.session_state.messages = []
+if "last_processed_audio"  not in st.session_state: st.session_state.last_processed_audio = None
+if "last_scenario"         not in st.session_state: st.session_state.last_scenario = list(SCENARIOS.keys())[0]
+if "chat_session"          not in st.session_state: st.session_state.chat_session = None
+if "xp"                    not in st.session_state: st.session_state.xp = 0
+if "xp_log"                not in st.session_state: st.session_state.xp_log = []
+if "badges"                not in st.session_state: st.session_state.badges = []
+if "new_badge"             not in st.session_state: st.session_state.new_badge = None
+if "streak"                not in st.session_state: st.session_state.streak = 0
+if "total_stars"           not in st.session_state: st.session_state.total_stars = 0
+if "scenarios_tried"       not in st.session_state: st.session_state.scenarios_tried = set()
+
 # --- HEADER ---
 st.markdown("""
-<div class="cruise-header">
-    <h1>🚢 Cruise Ship English Trainer</h1>
-    <p>Pregătire pentru <strong style="color:#60a5fa">Anamaria</strong> — practică reală pentru viața la bord</p>
+<div class="game-header">
+    <div class="game-title">🚢 CRUISE ENGLISH TRAINER</div>
+    <div class="game-subtitle">Training pentru <strong>Anamaria</strong> — misiunea ta pe vas începe aici</div>
 </div>
 """, unsafe_allow_html=True)
 
-# --- INIȚIALIZARE STATE ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "last_processed_audio" not in st.session_state:
-    st.session_state.last_processed_audio = None
-if "last_scenario" not in st.session_state:
-    st.session_state.last_scenario = list(SCENARIOS.keys())[0]
-if "chat_session" not in st.session_state:
-    st.session_state.chat_session = None
-if "total_corrections" not in st.session_state:
-    st.session_state.total_corrections = 0
-
 # --- SIDEBAR ---
 with st.sidebar:
-    st.markdown("### ⚙️ Setări")
-    
     selected_scenario_name = st.selectbox(
-        "Alege poziția pe vas:",
+        "🎮 Alege misiunea:",
         list(SCENARIOS.keys()),
         key="selected_scenario",
         index=list(SCENARIOS.keys()).index(st.session_state.last_scenario) if st.session_state.last_scenario in SCENARIOS else 0
     )
-    
+
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🔄 Sesiune Nouă", use_container_width=True):
+        if st.button("🔄 RESET", use_container_width=True):
             st.session_state.messages = []
             st.session_state.chat_session = None
             st.session_state.last_processed_audio = None
-            st.session_state.total_corrections = 0
             st.rerun()
     with col2:
-        if st.button("📊 Raport", use_container_width=True):
+        if st.button("📊 RAPORT", use_container_width=True):
             if len(st.session_state.messages) > 2:
-                with st.spinner("Analizăm sesiunea..."):
+                with st.spinner("Se procesează raportul..."):
                     try:
-                        report_prompt = """
-                        [SYSTEM OVERRIDE — STOP ROLEPLAY]
-                        Analyze the entire conversation and create a detailed progress report in Markdown.
-                        
-                        Structure:
-                        ## 📊 Cruise English Training Report
-                        
+                        rp = """[STOP ROLEPLAY] Analyze conversation. Output Markdown:
+                        ## 📊 Performance Report
                         ### 🏆 Overall Score: [X/10]
-                        
-                        ### 💪 What Anamaria did WELL:
-                        [list 3-5 positive observations]
-                        
-                        ### 🚨 Top 5 Recurring Mistakes:
-                        [list with corrections and examples from the conversation]
-                        
-                        ### 📚 Key Vocabulary to Practice:
-                        [list 8-10 words/phrases she struggled with, with definitions]
-                        
-                        ### 🎯 Homework for Next Session:
-                        [3 specific, actionable exercises]
-                        
-                        ### 🚢 Cruise-Specific Tips:
-                        [2-3 tips specific to the role she was practicing]
-                        """
-                        response = st.session_state.chat_session.send_message(report_prompt)
-                        st.session_state.messages.append({"role": "assistant", "content": f"📊 **RAPORT SESIUNE:**\n\n{response.text}"})
+                        ### 💪 Strengths: [3-5 points]
+                        ### 🚨 Top Mistakes: [5 with corrections]
+                        ### 📚 Vocabulary to Practice: [8-10 phrases]
+                        ### 🎯 Next Session Goals: [3 exercises]
+                        ### 🚢 Cruise-Specific Tips: [2-3 tips]"""
+                        resp = st.session_state.chat_session.send_message(rp)
+                        st.session_state.messages.append({"role": "assistant", "content": f"📊 **RAPORT:**\n\n{resp.text}"})
+                        award_badge("report_done")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Eroare: {e}")
             else:
-                st.warning("Mai practică puțin înainte de raport!")
+                st.warning("Mai practică înainte de raport!")
 
     st.divider()
-    
-    turns = count_turns()
-    goal = 10
-    progress_pct = min(turns / goal * 100, 100)
+
+    # XP & Level
+    current_level = get_level(st.session_state.xp)
+    xp_prog, xp_total = xp_to_next(st.session_state.xp)
+    pct = int(xp_prog / xp_total * 100) if xp_total > 0 else 100
+
     st.markdown(f"""
-    <div class="progress-container">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="color:#60a5fa;font-size:0.82em;font-weight:700">PROGRES SESIUNE</span>
-            <span style="color:#7090b0;font-size:0.78em">{turns}/{goal} ture</span>
+    <div class="xp-container">
+        <div class="xp-label">
+            <span class="level-name">{current_level['name']}</span>
+            <span class="xp-count">⚡ {st.session_state.xp} XP</span>
         </div>
-        <div class="progress-bar-bg">
-            <div class="progress-bar-fill" style="width:{progress_pct}%"></div>
+        <div class="xp-bar-bg">
+            <div class="xp-bar-fill" style="width:{pct}%"></div>
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    if turns >= goal:
-        st.success("🎉 Sesiune completă! Apasă Raport.")
-    
+
+    turns = count_turns()
+    st.markdown(f"""
+    <div class="stats-row">
+        <div class="stat-box">
+            <span class="stat-value">{'⭐' * min(st.session_state.total_stars, 5) if st.session_state.total_stars > 0 else '—'}</span>
+            <div class="stat-label">Stars</div>
+        </div>
+        <div class="stat-box">
+            <span class="stat-value">{turns}</span>
+            <div class="stat-label">Ture</div>
+        </div>
+        <div class="streak-box">
+            <span class="streak-value">🔥 {st.session_state.streak}</span>
+            <div class="stat-label">Streak</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # XP log
+    if st.session_state.xp_log:
+        for log in reversed(st.session_state.xp_log[-3:]):
+            st.markdown(f'<div class="xp-popup">{log}</div>', unsafe_allow_html=True)
+
     st.divider()
-    st.markdown('<div class="tips-header">💬 Fraze Cheie</div>', unsafe_allow_html=True)
-    vocab_list = VOCAB_TIPS.get(selected_scenario_name, [])
-    for phrase in vocab_list:
-        st.markdown(f'<div class="vocab-card">{phrase}</div>', unsafe_allow_html=True)
-    
+
+    # Badges
+    st.markdown('<div class="badges-title">🏅 Achievements</div>', unsafe_allow_html=True)
+    badge_html = '<div class="badges-grid">'
+    for key, badge in BADGES.items():
+        earned = key in st.session_state.badges
+        cls = "badge-item earned" if earned else "badge-item locked"
+        badge_html += f'<div class="{cls}" title="{badge[\"desc\"]}">{badge["icon"]} {badge["name"]}</div>'
+    badge_html += '</div>'
+    st.markdown(badge_html, unsafe_allow_html=True)
+
     st.divider()
-    st.markdown('<div class="tips-header">📁 Export</div>', unsafe_allow_html=True)
-    transcript_txt = get_transcript()
+
+    # Vocab
+    sc_data = SCENARIOS.get(selected_scenario_name, {})
+    if sc_data.get("vocab"):
+        st.markdown('<div class="vocab-section-title">💬 Fraze Cheie</div>', unsafe_allow_html=True)
+        for phrase in sc_data["vocab"]:
+            st.markdown(f'<div class="vocab-chip">{phrase}</div>', unsafe_allow_html=True)
+
+    st.divider()
+
     st.download_button(
-        label="💾 Descarcă Sesiunea (.md)",
-        data=transcript_txt,
-        file_name=f"cruise_english_{selected_scenario_name[:15].replace(' ','_')}.md",
+        "💾 Descarcă Sesiunea",
+        data=get_transcript(),
+        file_name="cruise_training.md",
         mime="text/markdown",
         use_container_width=True
     )
-    
-    st.divider()
+
     st.markdown("""
-    <div style="font-size:0.72em;color:#3a5070;text-align:center;line-height:1.6">
-        🚢 Antigravity Cruise Trainer v2.0<br>
-        Made with ❤️ for Anamaria
+    <div style="text-align:center;margin-top:16px;font-size:0.7em;color:#1a3a5c;line-height:1.8">
+        🚢 Cruise Trainer v3.0<br>Made with ❤️ for Anamaria
     </div>
     """, unsafe_allow_html=True)
 
-# --- LOGICA SCHIMBARE SCENARIU ---
+# --- SCENARIO CHANGE LOGIC ---
 if st.session_state.last_scenario != selected_scenario_name:
     st.session_state.messages = []
     st.session_state.chat_session = None
     st.session_state.last_processed_audio = None
-    st.session_state.total_corrections = 0
+    st.session_state.streak = 0
     st.session_state.last_scenario = selected_scenario_name
+    st.session_state.scenarios_tried.add(selected_scenario_name)
+    if len(st.session_state.scenarios_tried) >= len(SCENARIOS):
+        award_badge("all_scenarios")
     st.rerun()
 
-# --- START CHAT ENGINE ---
+st.session_state.scenarios_tried.add(selected_scenario_name)
+
+# --- INIT CHAT ---
 if st.session_state.chat_session is None:
-    model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=SCENARIOS[selected_scenario_name])
+    sc = SCENARIOS[selected_scenario_name]
+    model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=sc["prompt"])
     st.session_state.chat_session = model.start_chat(history=[])
     try:
-        initial = st.session_state.chat_session.send_message("Start the roleplay now with your opening line. Be warm but professional.")
+        initial = st.session_state.chat_session.send_message("Start the roleplay with your opening line. Be engaging and fun.")
         st.session_state.messages.append({"role": "assistant", "content": initial.text})
     except Exception as e:
-        st.error(f"Nu s-a putut inițializa sesiunea: {e}")
+        st.error(f"Init error: {e}")
+
+# --- NEW BADGE POPUP ---
+if st.session_state.new_badge:
+    badge = BADGES[st.session_state.new_badge]
+    st.markdown(f"""
+    <div class="badge-popup">
+        <div style="font-size:2rem">{badge['icon']}</div>
+        <div style="font-family:'Orbitron',monospace;color:#ffd700;font-size:0.9rem;font-weight:700;margin:4px 0">ACHIEVEMENT UNLOCKED!</div>
+        <div style="color:#fff;font-weight:600">{badge['name']}</div>
+        <div style="color:#a0a0a0;font-size:0.8em">{badge['desc']}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.session_state.new_badge = None
 
 # --- SCENARIO BADGE ---
-st.markdown(f'<span class="scenario-badge">{selected_scenario_name}</span>', unsafe_allow_html=True)
-st.markdown("")
+sc_info = SCENARIOS[selected_scenario_name]
+st.markdown(f"""
+<div class="scenario-active">
+    {sc_info['icon']} {selected_scenario_name}
+    &nbsp;·&nbsp; Difficulty: {sc_info['difficulty']}
+</div>
+""", unsafe_allow_html=True)
 
-# --- AFIȘARE MESAJE ---
+# --- MESSAGES ---
 chat_container = st.container()
 with chat_container:
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             content = msg["content"]
             has_feedback = "**🔍 Feedback:**" in content
-            
+
             if has_feedback:
-                roleplay_markers = [
-                    "**🛍️ James:**", "**🍽️ Marco:**", "**🍹 Jake:**",
-                    "**🛎️ Patricia:**", "**👔 Richard:**"
-                ]
-                split_point = -1
-                for marker in roleplay_markers:
-                    if marker in content:
-                        split_point = content.find(marker)
-                        break
-                
+                char_map = {
+                    "🛍️ Shop – Duty Free":      f"**🛍️ James:**",
+                    "🍽️ Waiter – Dining Room":  f"**🍽️ Marco:**",
+                    "🍹 Bartender – Pool Bar":   f"**🍹 Jake:**",
+                    "🛎️ Guest Services":         f"**🛎️ Patricia:**",
+                    "🎯 HR Interview":           f"**👔 Richard:**",
+                }
+                marker = char_map.get(selected_scenario_name, "")
+                split_point = content.find(marker) if marker else -1
+
+                # Extract stars for display
+                stars_display = ""
+                if "★★★" in content:
+                    stars_display = '<div class="stars-earned">★★★ Perfect!</div>'
+                elif "★★☆" in content:
+                    stars_display = '<div class="stars-earned">★★☆ Good job!</div>'
+                elif "★☆☆" in content:
+                    stars_display = '<div class="stars-earned">★☆☆ Keep going!</div>'
+
                 if split_point > 0:
                     feedback_part = content[:split_point].strip()
                     roleplay_part = content[split_point:].strip()
-                    st.markdown(f'<div class="feedback-box">{feedback_part}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="feedback-box">{feedback_part}{stars_display}</div>', unsafe_allow_html=True)
                     st.markdown(f'<div class="roleplay-box">{roleplay_part}</div>', unsafe_allow_html=True)
                 else:
                     st.markdown(content)
             else:
                 st.markdown(content)
 
-# --- INPUT ZONE ---
+# --- INPUT ---
 footer = st.container()
 with footer:
-    audio_val = st.audio_input("🎤 Sau vorbește direct")
-    text_val = st.chat_input("Scrie răspunsul tău în Engleză...")
-    
+    audio_val = st.audio_input("🎤 Vorbește")
+    text_val = st.chat_input("Scrie în Engleză...")
+
     user_message = None
     is_audio = False
     should_process = False
-    
-    has_new_audio = False
-    if audio_val:
-        if st.session_state.last_processed_audio != audio_val.file_id:
-            has_new_audio = True
-    
-    if has_new_audio:
+
+    if audio_val and st.session_state.last_processed_audio != audio_val.file_id:
         user_message = audio_val
         is_audio = True
         should_process = True
         st.session_state.last_processed_audio = audio_val.file_id
     elif text_val:
         user_message = text_val
-        is_audio = False
         should_process = True
-    
+
     if should_process and user_message:
         with chat_container:
             with st.chat_message("user"):
-                if is_audio:
-                    st.audio(user_message)
-                else:
-                    st.markdown(user_message)
-        
-        if not is_audio:
-            st.session_state.messages.append({"role": "user", "content": user_message})
-        else:
-            st.session_state.messages.append({"role": "user", "content": "🎤 *Mesaj audio*"})
-        
-        char_map = {
-            "🛍️ Shop Assistant – Duty Free": "**🛍️ James:**",
-            "🍽️ Waiter – Main Dining Room": "**🍽️ Marco:**",
-            "🍹 Bartender – Pool Bar": "**🍹 Jake:**",
-            "🚢 Guest Services – Information Desk": "**🛎️ Patricia:**",
-            "🎯 Mock Test – Job Interview (Cruise Line HR)": "**👔 Richard:**",
+                if is_audio: st.audio(user_message)
+                else: st.markdown(user_message)
+
+        content_to_save = "🎤 *Audio Message*" if is_audio else user_message
+        st.session_state.messages.append({"role": "user", "content": content_to_save})
+
+        # Badges
+        if not "first_message" in st.session_state.badges:
+            award_badge("first_message")
+        if is_audio and "audio_used" not in st.session_state.badges:
+            award_badge("audio_used")
+        turns_now = count_turns()
+        if turns_now >= 5  and "5_turns"  not in st.session_state.badges: award_badge("5_turns")
+        if turns_now >= 10 and "10_turns" not in st.session_state.badges: award_badge("10_turns")
+
+        char_map2 = {
+            "🛍️ Shop – Duty Free":     "**🛍️ James:**",
+            "🍽️ Waiter – Dining Room": "**🍽️ Marco:**",
+            "🍹 Bartender – Pool Bar":  "**🍹 Jake:**",
+            "🛎️ Guest Services":        "**🛎️ Patricia:**",
+            "🎯 HR Interview":          "**👔 Richard:**",
         }
-        char_tag = char_map.get(selected_scenario_name, "**[Character]:**")
-        reminder = f" (IMPORTANT: Always start with **🔍 Feedback:** block analyzing my English, then use {char_tag} to continue the roleplay.)"
-        
+        char_tag = char_map2.get(selected_scenario_name, "**[Character]:**")
+        reminder = f" (ALWAYS start with **🔍 Feedback:** block with stars rating ★★★/★★☆/★☆☆, then {char_tag} for roleplay)"
+
         try:
-            with st.spinner("Se analizează..."):
+            with st.spinner("⚡ Procesează..."):
                 if is_audio:
                     blob = {"mime_type": user_message.type, "data": user_message.getvalue()}
-                    response = st.session_state.chat_session.send_message(
-                        ["Transcribe and analyze the English quality of this audio.", blob, reminder]
-                    )
+                    response = st.session_state.chat_session.send_message(["Analyze English quality of this audio.", blob, reminder])
                 else:
                     response = st.session_state.chat_session.send_message(user_message + reminder)
-            
-            content = response.text
-            st.session_state.messages.append({"role": "assistant", "content": content})
-            if "❌" in content:
-                st.session_state.total_corrections += content.count("❌")
+
+            resp_text = response.text
+            st.session_state.messages.append({"role": "assistant", "content": resp_text})
+
+            # XP & streak logic
+            stars = count_stars_in_response(resp_text)
+            st.session_state.total_stars += stars
+
+            xp_earned = XP_REWARDS["message_sent"]
+            reason = "mesaj trimis"
+
+            if stars == 3:
+                xp_earned += XP_REWARDS["no_mistake"]
+                reason = "răspuns perfect ★★★"
+                st.session_state.streak += 1
+                if st.session_state.streak == 3:
+                    xp_earned += XP_REWARDS["streak_3"]
+                    reason += " + streak x3!"
+                    award_badge("no_mistakes")
+                if st.session_state.streak == 5:
+                    xp_earned += XP_REWARDS["streak_5"]
+                    reason += " + streak x5! 🔥"
+            else:
+                st.session_state.streak = 0
+
+            if is_audio:
+                xp_earned += XP_REWARDS["audio_bonus"]
+                reason += " + bonus audio 🎤"
+
+            award_xp(xp_earned, reason)
             st.rerun()
-            
+
         except Exception as e:
             # Revert UI messages
             if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
@@ -619,7 +918,7 @@ with footer:
             except Exception:
                 pass
                 
-            # Revert audio processing state so the user can re-send the same audio
+            # Revert audio processing state
             if is_audio:
                 st.session_state.last_processed_audio = None
 
