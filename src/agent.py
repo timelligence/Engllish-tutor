@@ -1686,6 +1686,130 @@ hr { border-color: var(--border) !important; }
     animation: confettiFall linear forwards;
 }
 
+
+/* ===== CHAT BUBBLES ===== */
+.chat-area {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 4px 0 16px;
+}
+/* User bubble */
+.bubble-user-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    margin-left: auto;
+    max-width: 75%;
+}
+.bubble-user-label {
+    font-size: 0.68rem;
+    color: var(--cyan);
+    opacity: 0.7;
+    margin-bottom: 3px;
+    padding-right: 4px;
+    letter-spacing: 0.3px;
+}
+.bubble-user {
+    background: linear-gradient(135deg, #0d2a4a, #0a2040);
+    border: 1px solid #1a5080;
+    border-radius: 18px 18px 4px 18px;
+    padding: 12px 16px;
+    color: var(--text);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    word-break: break-word;
+}
+/* AI opening bubble (no feedback) */
+.bubble-opening {
+    background: #001428;
+    border-top: 2px solid var(--cyan);
+    border-radius: 0 14px 14px 14px;
+    padding: 14px 18px;
+    color: var(--text);
+    font-size: 0.92rem;
+    line-height: 1.6;
+    max-width: 88%;
+    margin-right: auto;
+}
+/* Feedback sub-bubble */
+.bubble-feedback-wrap {
+    display: flex;
+    flex-direction: column;
+    max-width: 88%;
+    margin-right: auto;
+    gap: 6px;
+}
+.bubble-fb-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #ff4757;
+    margin-bottom: 3px;
+    letter-spacing: 0.5px;
+}
+.bubble-feedback {
+    background: linear-gradient(135deg, #1a0608, #220810);
+    border-left: 3px solid #ff4757;
+    border-radius: 0 12px 12px 12px;
+    padding: 12px 16px;
+    color: var(--text);
+    font-size: 0.88rem;
+    line-height: 1.6;
+}
+/* Roleplay sub-bubble */
+.bubble-rp-label {
+    font-size: 0.7rem;
+    color: var(--green);
+    opacity: 0.8;
+    margin-bottom: 3px;
+    letter-spacing: 0.3px;
+}
+.bubble-roleplay {
+    background: linear-gradient(135deg, #001a0e, #002216);
+    border-left: 3px solid #00ff88;
+    border-radius: 0 12px 12px 12px;
+    padding: 12px 16px;
+    color: var(--text);
+    font-size: 0.92rem;
+    line-height: 1.6;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+.bubble-rp-avatar {
+    font-size: 1.25rem;
+    flex-shrink: 0;
+    line-height: 1;
+    margin-top: 2px;
+}
+.bubble-rp-text { flex: 1; min-width: 0; }
+/* Stars pill */
+.stars-pill {
+    display: inline-block;
+    font-size: 0.85rem;
+    font-weight: 700;
+    border-radius: 20px;
+    padding: 3px 12px;
+    margin-top: 4px;
+    letter-spacing: 0.3px;
+}
+.stars-pill.s3 {
+    background: rgba(255,215,0,0.08);
+    border: 1px solid var(--gold);
+    color: var(--gold);
+    text-shadow: 0 0 10px rgba(255,215,0,0.6);
+}
+.stars-pill.s2 {
+    background: rgba(180,180,180,0.07);
+    border: 1px solid #aaa;
+    color: #ccc;
+}
+.stars-pill.s1 {
+    background: rgba(255,159,67,0.08);
+    border: 1px solid #ff9f43;
+    color: #ff9f43;
+}
+
 /* ===== FLASHCARDS ===== */
 .fc-wrapper {
     max-width: 680px;
@@ -2392,41 +2516,92 @@ else:
 """, unsafe_allow_html=True)
 
     # --- MESSAGES ---
+    _sc_avatar   = sc_info.get("avatar", sc_info.get("char_emoji", "🤖"))
+    _sc_char     = sc_info.get("char", "Trainer")
+
+    # Map scenariu → marker de split roleplay
+    _char_marker_map = {
+        "🛗️ Shop – Duty Free":      "**🛗️ James:**",
+        "🍽️ Waiter – Dining Room":  "**🍽️ Marco:**",
+        "🍹 Bartender – Pool Bar":         "**🍹 Jake:**",
+        "🛝️ Guest Services":              "**🛝️ Patricia:**",
+        "🎯 HR Interview":                      "**👔 Richard:**",
+    }
+    _rp_marker = _char_marker_map.get(selected_scenario_name, "")
+
+    def _stars_pill(text):
+        if "★★★" in text:
+            return '<span class="stars-pill s3">★★★ Perfect!</span>'
+        if "★★☆" in text:
+            return '<span class="stars-pill s2">★★☆ Good job!</span>'
+        if "★☆☆" in text:
+            return '<span class="stars-pill s1">★☆☆ Keep going!</span>'
+        return ""
+
+    def _md_to_safe(text):
+        """Minimal markdown → HTML: bold, italic, inline-code, newlines."""
+        import html as _html
+        t = _html.escape(text)
+        t = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', t, flags=re.DOTALL)
+        t = re.sub(r'\*(.+?)\*',   r'<em>\1</em>',      t, flags=re.DOTALL)
+        t = re.sub(r'`(.+?)`',     r'<code>\1</code>', t, flags=re.DOTALL)
+        t = t.replace("\n", "<br>")
+        return t
+
     chat_container = st.container()
     with chat_container:
+        st.markdown('<div class="chat-area">', unsafe_allow_html=True)
+        is_first_ai = True  # primul mesaj AI = opening line
+
         for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                content = msg["content"]
-                has_feedback = "**🔍 Feedback:**" in content
+            role    = msg["role"]
+            content = msg["content"]
 
-                if has_feedback:
-                    char_map = {
-                        "🛗️ Shop – Duty Free":      f"**🛗️ James:**",
-                        "🍽️ Waiter – Dining Room":  f"**🍽️ Marco:**",
-                        "🍹 Bartender – Pool Bar":         f"**🍹 Jake:**",
-                        "🛝️ Guest Services":               f"**🛝️ Patricia:**",
-                        "🎯 HR Interview":                       f"**👔 Richard:**",
-                    }
-                    marker = char_map.get(selected_scenario_name, "")
-                    split_point = content.find(marker) if marker else -1
-
-                    stars_display = ""
-                    if "★★★" in content:
-                        stars_display = '<div class="stars-earned">★★★ Perfect!</div>'
-                    elif "★★☆" in content:
-                        stars_display = '<div class="stars-earned">★★☆ Good job!</div>'
-                    elif "★☆☆" in content:
-                        stars_display = '<div class="stars-earned">★☆☆ Keep going!</div>'
-
-                    if split_point > 0:
-                        feedback_part = content[:split_point].strip()
-                        roleplay_part = content[split_point:].strip()
-                        st.markdown(f'<div class="feedback-box">{feedback_part}{stars_display}</div>', unsafe_allow_html=True)
-                        st.markdown(f'<div class="roleplay-box">{roleplay_part}</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown(content)
+            # ── USER BUBBLE ──────────────────────────────────────────────────
+            if role == "user":
+                is_first_ai = False  # reset flag (nu mai e primul AI)
+                if content.startswith("🎤"):
+                    inner = "🎤 <em>Audio message</em>"
                 else:
-                    st.markdown(content)
+                    inner = _md_to_safe(content)
+                st.markdown(f"""
+<div class="bubble-user-wrap">
+  <div class="bubble-user-label">👩 Anamaria</div>
+  <div class="bubble-user">{inner}</div>
+</div>""", unsafe_allow_html=True)
+
+            # ── AI BUBBLE ────────────────────────────────────────────────────
+            else:
+                has_feedback = "**🔍 Feedback:**" in content or "🔍 Feedback:" in content
+                split_pt = content.find(_rp_marker) if _rp_marker else -1
+
+                if is_first_ai or not has_feedback or split_pt < 0:
+                    # Opening line sau mesaj simplu fără feedback
+                    inner = _md_to_safe(content)
+                    st.markdown(f"""
+<div class="bubble-opening">{inner}</div>""", unsafe_allow_html=True)
+                    is_first_ai = False
+                else:
+                    is_first_ai = False
+                    fb_raw  = content[:split_pt].strip()
+                    rp_raw  = content[split_pt:].strip()
+                    pill    = _stars_pill(fb_raw)
+                    fb_html = _md_to_safe(fb_raw)
+                    rp_html = _md_to_safe(rp_raw)
+
+                    st.markdown(f"""
+<div class="bubble-feedback-wrap">
+  <div class="bubble-fb-label">🔍 FEEDBACK</div>
+  <div class="bubble-feedback">{fb_html}</div>
+  {f'<div style="margin-top:2px">{pill}</div>' if pill else ""}
+  <div class="bubble-rp-label" style="margin-top:4px">{_sc_avatar} {_sc_char.upper()}</div>
+  <div class="bubble-roleplay">
+    <div class="bubble-rp-avatar">{_sc_avatar}</div>
+    <div class="bubble-rp-text">{rp_html}</div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # --- INPUT (blocat când hearts == 0) ---
     footer = st.container()
@@ -2449,9 +2624,13 @@ else:
 
         if should_process and user_message:
             with chat_container:
-                with st.chat_message("user"):
-                    if is_audio: st.audio(user_message)
-                    else: st.markdown(user_message)
+                if is_audio:
+                    st.markdown('<div class="bubble-user-wrap"><div class="bubble-user-label">👩 Anamaria</div><div class="bubble-user">🎤 <em>Audio message</em></div></div>', unsafe_allow_html=True)
+                    st.audio(user_message)
+                else:
+                    import html as _html2
+                    _safe = _html2.escape(user_message).replace("\n","<br>")
+                    st.markdown(f'<div class="bubble-user-wrap"><div class="bubble-user-label">👩 Anamaria</div><div class="bubble-user">{_safe}</div></div>', unsafe_allow_html=True)
 
             content_to_save = "🎤 *Audio Message*" if is_audio else user_message
             st.session_state.messages.append({"role": "user", "content": content_to_save})
