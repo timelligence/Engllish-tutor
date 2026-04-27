@@ -1,16 +1,21 @@
 import os
+import re
 import datetime
+import random
 import google.generativeai as genai
 import streamlit as st
 from dotenv import load_dotenv
-import json
-import random
 
 # --- CONFIGURARE ---
 load_dotenv()
-api_key = os.getenv("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY", "")
+try:
+    api_key = os.getenv("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY", "")
+except Exception:
+    api_key = os.getenv("GOOGLE_API_KEY", "")
 if not api_key:
     st.error("❌ EROARE: Lipsește GOOGLE_API_KEY")
+    if st.button("🔄 Reîncearcă", key="retry_api_key"):
+        st.rerun()
     st.stop()
 
 genai.configure(api_key=api_key)
@@ -2467,7 +2472,7 @@ if st.session_state.get("level_up_pending"):
     </div>
     """, unsafe_allow_html=True)
     
-    # Butonul CONTINUĂ — ÎNAINTE de st.stop(), nu după
+    # Butonul CONTINUĂ — ÎNAINTE de apelul stop(), nu după
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         if st.button("🚀 CONTINUĂ", use_container_width=True, key="btn_levelup_continue"):
@@ -2792,6 +2797,8 @@ else:
                 st.warning("⏳ Ai atins limita de trafic a API-ului Google (Rate Limit / Quota). Te rog ăşteaptă câteva momente şi apasă butonul RESET.")
             else:
                 st.error(f"Eroare la inițializarea sesiunii: {e}")
+            if st.button("🔄 Reîncearcă", key="retry_init"):
+                st.rerun()
             st.stop()
 
     # --- NEW BADGE POPUP ---
@@ -2822,6 +2829,12 @@ else:
             </div>
         </div>
         """, unsafe_allow_html=True)
+        if st.button("🔄 RESET GAME", key="btn_game_over"):
+            st.session_state.hearts = 5
+            st.session_state.heart_streak = 0
+            st.session_state.messages = []
+            st.session_state.chat_session = None
+            st.rerun()
         st.stop()  # Blochează tot ce urmează
 
     def _md_to_safe(text):
