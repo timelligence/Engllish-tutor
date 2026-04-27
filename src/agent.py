@@ -1,4 +1,5 @@
 import os
+import datetime
 import google.generativeai as genai
 import streamlit as st
 from dotenv import load_dotenv
@@ -17,11 +18,11 @@ MODEL_NAME = 'gemini-2.5-flash'
 
 # --- GAME CONFIG ---
 LEVELS = [
-    {"name": "🧹 Rookie Crew",       "min_xp": 0,    "color": "#7f8c8d"},
-    {"name": "⚓ Junior Staff",       "min_xp": 50,   "color": "#3498db"},
-    {"name": "🍽️ Trained Steward",   "min_xp": 150,  "color": "#2ecc71"},
-    {"name": "🎖️ Senior Officer",    "min_xp": 350,  "color": "#f39c12"},
-    {"name": "👑 Captain's Elite",   "min_xp": 700,  "color": "#e74c3c"},
+    {"name": "🧹 Rookie Crew",       "min_xp": 0,    "color": "#7f8c8d", "unlock_msg": "🚀 Bine ai venit la bord! Fiecare expert a început ca rookie."},
+    {"name": "⚓ Junior Staff",       "min_xp": 50,   "color": "#3498db", "unlock_msg": "🌊 Eşti Junior Staff — începem să te cunoască pasagerii!"},
+    {"name": "🍽️ Trained Steward",   "min_xp": 150,  "color": "#2ecc71", "unlock_msg": "🏖️ Eşti Trained Steward — pasagerii au încredere în tine!"},
+    {"name": "🎖️ Senior Officer",    "min_xp": 350,  "color": "#f39c12", "unlock_msg": "🏆 Senior Officer! Engleza ta este impresionantă!"},
+    {"name": "👑 Captain's Elite",   "min_xp": 700,  "color": "#e74c3c", "unlock_msg": "👑 Captain's Elite! Ai atins perfecțiunea pe vas!"},
 ]
 
 BADGES = {
@@ -32,6 +33,9 @@ BADGES = {
     "audio_used":       {"icon": "🎙️", "name": "Voice Activated",   "desc": "Ai folosit vocea"},
     "report_done":      {"icon": "📊", "name": "Self-Aware",         "desc": "Ai generat un raport"},
     "all_scenarios":    {"icon": "🌊", "name": "Full Crew",          "desc": "Ai încercat toate scenariile"},
+    "vocab_master":     {"icon": "🏆", "name": "Vocab Master",       "desc": "Toate frazele stăpânite într-un scenariu"},
+    # --- DAILY STREAK BADGE ---
+    "streak_week":      {"icon": "📅", "name": "Full Week",          "desc": "7 zile consecutive de practică"},
 }
 
 XP_REWARDS = {
@@ -40,6 +44,274 @@ XP_REWARDS = {
     "audio_bonus":    15,
     "streak_3":       20,
     "streak_5":       40,
+}
+
+# Numărul maxim de vieți per sesiune (sistem Duolingo-style)
+MAX_HEARTS = 5
+
+# ===== QUICK PRACTICE EXERCISES =====
+# Format per exercițiu: {"q": str, "options": [str x4], "correct": int (0-based index)}
+QP_EXERCISES = {
+    "🛗 Shop – Duty Free": [
+        {
+            "q": "Un pasager întřeabă de un parfum cadou pentru soție. Ce spui?",
+            "options": [
+                "May I help you find something special for her?",
+                "What you want for wife?",
+                "We sell parfume here.",
+                "I don't know, look yourself."
+            ],
+            "correct": 0
+        },
+        {
+            "q": "Vrei să anunți că aveți o ofertă specială la ciocolată.",
+            "options": [
+                "Chocolate is cheap today!",
+                "We have a special offer on our premium Belgian chocolates today.",
+                "Buy chocolate, it good price.",
+                "Chocolate discount, you want?"
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Un client vrea să încerce un eśantion de parfum. Cum răspunzi?",
+            "options": [
+                "No sample available, sorry.",
+                "You can try but be careful.",
+                "Would you like to try a sample? Let me spray it on a test strip for you.",
+                "Sample is over there, go check."
+            ],
+            "correct": 2
+        },
+        {
+            "q": "Clientul plăteşte şi vrei să oferi ambalaj cadou.",
+            "options": [
+                "Shall I gift-wrap that for you? It would make a lovely presentation.",
+                "Want box for this?",
+                "I put in bag, no problem.",
+                "We have paper, you do yourself."
+            ],
+            "correct": 0
+        },
+        {
+            "q": "Un pasager întreabă care e limita duty-free. Ce spui?",
+            "options": [
+                "I don't know the rules.",
+                "Too much is not allowed, ask captain.",
+                "Buy whatever you like, no problem.",
+                "The duty-free allowance depends on your destination port — I can check that for you."
+            ],
+            "correct": 3
+        },
+    ],
+    "🍽️ Waiter – Dining Room": [
+        {
+            "q": "Un cuplu tocmai a sosit la masă. Cum îtâmpini?",
+            "options": [
+                "Hey, sit down please.",
+                "Good evening! Welcome to the Main Dining Room. May I show you to your table?",
+                "Table is ready, go sit.",
+                "You have reservation?"
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Vrei să iei comanda băuturii.",
+            "options": [
+                "You want drink?",
+                "Can I get drinks for you?",
+                "May I take your drinks order, or would you care to start with some still or sparkling water?",
+                "Water or juice, which one?"
+            ],
+            "correct": 2
+        },
+        {
+            "q": "Un oaspete cere friptura ‘medium’. Confirmi comanda.",
+            "options": [
+                "OK, medium, I write it.",
+                "So that’s the sirloin cooked medium — a wonderful choice. I’ll have that right out.",
+                "Medium is not too cooked, right?",
+                "Medium means pink inside, you sure?"
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Un oaspete e nemulțumit de mâncare. Ce spui?",
+            "options": [
+                "I sincerely apologize. Allow me to inform the chef and arrange an alternative right away.",
+                "Sorry, chef make mistake today.",
+                "Is not my fault, talk to manager.",
+                "You should have ordered something else."
+            ],
+            "correct": 0
+        },
+        {
+            "q": "Vrei să întrebi despre alergeni înainte de comandă.",
+            "options": [
+                "You allergic to something?",
+                "Before I take your order, do you have any dietary requirements or allergies I should be aware of?",
+                "Our food has no allergens.",
+                "Allergies are on the menu, check please."
+            ],
+            "correct": 1
+        },
+    ],
+    "🍹 Bartender – Pool Bar": [
+        {
+            "q": "Un client vine la bar. Cum îl salută Jake?",
+            "options": [
+                "What do you need?",
+                "Hey there! Welcome to the pool bar — what can I get for you today?",
+                "Bar is open, order now.",
+                "You want cocktail or beer?"
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Un client vrea whisky fără gheață. Cum confirmi?",
+            "options": [
+                "No ice whisky, coming!",
+                "Whisky without cold things, ok.",
+                "One whisky neat — coming right up!",
+                "Sure, I remove the ice for you."
+            ],
+            "correct": 2
+        },
+        {
+            "q": "Clientul vrea să deschidă un tab. Cum răspunzi?",
+            "options": [
+                "Sure! Can I take your cabin number to start a tab for you?",
+                "Tab? What is tab?",
+                "You pay now or later?",
+                "Leave card here, I charge later."
+            ],
+            "correct": 0
+        },
+        {
+            "q": "Vrei să prezinți cocktailul zilei.",
+            "options": [
+                "Today we have special drink, is good.",
+                "Our special today is the Mango Sunset — it’s a blend of rum, fresh mango and lime. Want to try one?",
+                "We make cocktail, you want?",
+                "Cocktail today is tropical, order it."
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Un client termină băutura. Ce spui?",
+            "options": [
+                "Another one?",
+                "Would you like another round, or can I get you anything else?",
+                "You finish, want more?",
+                "Same again or different?"
+            ],
+            "correct": 1
+        },
+    ],
+    "🛝️ Guest Services": [
+        {
+            "q": "Un pasager nervos se apropie de birou. Cum îl întâmpini?",
+            "options": [
+                "What is the problem?",
+                "Good morning, I can see you have a concern — I’m here to help. How may I assist you?",
+                "Calm down please, what you want?",
+                "Wait, I call my colleague."
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Pasagerul plânge că a pierdut un obiect. Ce spui?",
+            "options": [
+                "Lost & Found is in deck 2, go there.",
+                "Oh no! I completely understand your concern. Let me check our Lost & Found log right away.",
+                "Sorry, we can’t help with this.",
+                "You should be more careful next time."
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Un client întreabă despre excursia de mâine la port.",
+            "options": [
+                "Excursion is at 8, take bus.",
+                "The shore excursion departs from Deck 4 at 08:00. Shall I print your tickets?",
+                "Ask tour operator, not me.",
+                "Tomorrow morning, early, go to boat."
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Pasagerul reclamă că aerul condiționat din cabină nu funcționează.",
+            "options": [
+                "I’m afraid I’m unable to fix it myself, but I’ll dispatch our maintenance team to your cabin immediately.",
+                "AC broken? Call reception.",
+                "Open window, is better.",
+                "Not my department, call housekeeping."
+            ],
+            "correct": 0
+        },
+        {
+            "q": "Trebuie să transmiți o veste proastă cu empatie.",
+            "options": [
+                "Bad news: excursion cancelled.",
+                "Unfortunately the excursion has been cancelled.",
+                "I’m afraid I have some disappointing news — the excursion has been cancelled due to weather. I sincerely apologize for the inconvenience.",
+                "Sorry, nothing I can do about weather."
+            ],
+            "correct": 2
+        },
+    ],
+    "🎯 HR Interview": [
+        {
+            "q": "Richard te roagă să te prezinți. Ce răspunzi?",
+            "options": [
+                "I am Anamaria, I want to work on ship.",
+                "My name is Anamaria. I have three years of hospitality experience and I’m passionate about delivering outstanding guest experiences.",
+                "Hello, I come from Romania and I need this job.",
+                "I am good worker, very hard working."
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Esti întrebată despre punctele tale forte.",
+            "options": [
+                "I am fast and I smile always.",
+                "I believe my key strengths are adaptability, strong communication skills and the ability to remain calm under pressure.",
+                "I have no weaknesses, only strengths.",
+                "I work hard and learn quick."
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Cum răspunzi la “Tell me about a difficult customer situation”?",
+            "options": [
+                "Once a customer was very bad and I called my manager.",
+                "In my previous role, a guest complained about a long wait. I acknowledged their frustration, offered a complimentary drink, and personally ensured their order was prioritized.",
+                "I never had difficult customers, I am very good.",
+                "Difficult customers are always wrong, I think."
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Richard întreabă de ce vrei să lucrezi pe vas.",
+            "options": [
+                "Because I want to travel and earn money.",
+                "I am eager to grow with the company and believe the cruise environment will allow me to develop both professionally and personally while exceeding guest expectations.",
+                "Ship is good for career I think.",
+                "My friend works on ship and she say is good."
+            ],
+            "correct": 1
+        },
+        {
+            "q": "Cum închei interviul profesionist?",
+            "options": [
+                "OK, bye, I wait your call.",
+                "Thank you so much, I hope to hear back soon.",
+                "Thank you for this opportunity, Mr. Richard. I’m genuinely excited about this role and confident I can make a valuable contribution to your team.",
+                "I think interview go well, you should hire me."
+            ],
+            "correct": 2
+        },
+    ],
 }
 
 SCENARIOS = {
@@ -70,6 +342,14 @@ SCENARIOS = {
         
         OPENING: "Welcome aboard, Anamaria! I'm James, Deck 5 Boutique supervisor. First test — a passenger wants 'something nice for his wife.' What do you say?"
         """,
+        "vocab_cards": [
+            {"phrase": "May I help you find something?",      "phonetic": "/meɪ aɪ help juː faɪnd ˈsʌmθɪŋ/",         "context": "La abordarea unui client",                       "example": "\"May I help you find something for your wife?\""},
+            {"phrase": "This is one of our best sellers.",    "phonetic": "/ðɪs ɪz wʌn əv aʊər best ˈselərz/",          "context": "La recomandarea unui produs popular",            "example": "\"This perfume is one of our best sellers this season.\""},
+            {"phrase": "Would you like to try a sample?",     "phonetic": "/wʊd juː laɪk tuː traɪ ə ˈsæmpəl/",           "context": "La oferirea unui eşantion",                         "example": "\"Would you like to try a sample of this cologne?\""},
+            {"phrase": "I can gift-wrap that for you.",       "phonetic": "/aɪ kæn ˈɡɪft ræp ðæt fər juː/",            "context": "La finalizarea vânzării",                           "example": "\"Shall I gift-wrap that? It makes a lovely present.\""},
+            {"phrase": "Duty-free allowance",                 "phonetic": "/ˈdjuːti friː əˈlaʊəns/",                   "context": "La explicarea regulilor vamale",                   "example": "\"The duty-free allowance for spirits is one litre.\""},
+            {"phrase": "We have a special offer on...",       "phonetic": "/wiː hæv ə ˈspeʃəl ˈɔfər ɔn/",              "context": "La promovarea unei oferte",                         "example": "\"We have a special offer on Belgian chocolates today.\""},
+        ],
         "vocab": ["May I help you find something?", "This is one of our best sellers.", "Would you like to try a sample?", "I can gift-wrap that for you.", "Duty-free allowance", "We have a special offer on..."]
     },
     "🍽️ Waiter – Dining Room": {
@@ -99,6 +379,14 @@ SCENARIOS = {
         
         OPENING: "Buonasera, Anamaria! I'm Marco. Tonight you shadow me. A couple just arrived at their table — greet them properly. Go!"
         """,
+        "vocab_cards": [
+            {"phrase": "May I take your order?",              "phonetic": "/meɪ aɪ teɪk jʊər ˈɔːrdər/",              "context": "La preluarea comenzii",                             "example": "\"Good evening. May I take your order now?\""},
+            {"phrase": "Would you care for...?",              "phonetic": "/wʊd juː keər fər/",                       "context": "La oferirea politicoasă a ceva",                    "example": "\"Would you care for some sparkling water to start?\""},
+            {"phrase": "The chef recommends...",              "phonetic": "/ðə ʃef ˌrekəˈmendz/",                    "context": "La prezentarea specialității zilei",               "example": "\"The chef recommends the sea bass this evening.\""},
+            {"phrase": "I do apologize for the inconvenience.","phonetic": "/aɪ duː əˈpɔlədʒaɪz fər ði ɪnˈkɔnvɪˈniːəns/","context": "La gestionarea unei plângeri",                       "example": "\"I do apologize for the inconvenience — allow me to replace that.\""},
+            {"phrase": "Rare / medium / well-done",           "phonetic": "/reər ˈmiːdiəm wel dʌn/",                "context": "La preluarea comenzii de carne",                    "example": "\"How would you like your steak — rare, medium or well-done?\""},
+            {"phrase": "Allergens / dietary requirements",    "phonetic": "/ˈælərdʒənz ˈdaɪətəri rɪˈkwaɪərmənts/",      "context": "La începerea servirii",                              "example": "\"Do you have any allergens or dietary requirements I should know of?\""},
+        ],
         "vocab": ["May I take your order?", "Would you care for...?", "The chef recommends...", "I do apologize for the inconvenience.", "Rare / medium / well-done", "Allergens / dietary requirements"]
     },
     "🍹 Bartender – Pool Bar": {
@@ -126,6 +414,14 @@ SCENARIOS = {
         
         OPENING: "Hey! Best office on the ship — the pool bar! I'm Jake. First customer incoming — you serve. Go!"
         """,
+        "vocab_cards": [
+            {"phrase": "Coming right up!",                    "phonetic": "/ˈkʌmɪŋ raɪt ʌp/",                      "context": "La confirmarea comenzii",                           "example": "\"One mojito — coming right up!\""},
+            {"phrase": "What can I get for you?",             "phonetic": "/wɔt kæn aɪ ɡet fər juː/",               "context": "La întâmpinarea clientului",                        "example": "\"Hey there! What can I get for you today?\""},
+            {"phrase": "On the rocks / straight up / neat",   "phonetic": "/ɔn ðə rɔks / streɪt ʌp / niːt/",        "context": "La preluarea comenzii de băutură spirtoase",       "example": "\"Would you like that on the rocks or neat?\""},
+            {"phrase": "Would you like to start a tab?",      "phonetic": "/wʊd juː laɪk tuː stɑːrt ə tæb/",           "context": "La începerea evidenței băuturilor",                  "example": "\"Can I take your cabin number to start a tab?\""},
+            {"phrase": "Our special today is...",             "phonetic": "/aʊər ˈspeʃəl təˈdeɪ ɪz/",                "context": "La prezentarea cocktailului zilei",                 "example": "\"Our special today is the Mango Sunset — rum, mango and lime.\""},
+            {"phrase": "Cheers! / Enjoy!",                    "phonetic": "/tʃɪərz / ɪndʒɔɪ/",                      "context": "La servirea băuturii",                              "example": "\"Here you go — cheers! Enjoy!\""},
+        ],
         "vocab": ["Coming right up!", "What can I get for you?", "On the rocks / straight up / neat", "Would you like to start a tab?", "Our special today is...", "Cheers! / Enjoy!"]
     },
     "🛎️ Guest Services": {
@@ -154,6 +450,14 @@ SCENARIOS = {
         
         OPENING: "Good morning, Anamaria. Welcome to Guest Services. An upset passenger is approaching — greet her."
         """,
+        "vocab_cards": [
+            {"phrase": "I completely understand your concern.","phonetic": "/aɪ kəmˈpliːtli ʌnˈdærstænd jʊər kənˈsɜːrn/","context": "La prima reacție la o plângere",                    "example": "\"I completely understand your concern — I will resolve this immediately.\""},
+            {"phrase": "Allow me to look into that for you.", "phonetic": "/əˈlaʊ miː tuː lʊk ˈɪntuː ðæt fər juː/",  "context": "La investigarea unei solicitări",                   "example": "\"Please wait a moment — allow me to look into that for you.\""},
+            {"phrase": "I sincerely apologize for the inconvenience.","phonetic": "/aɪ sɪnˈsɪərli əˈpɔlədʒaɪz/",          "context": "La recunoaşterea unei erori",                       "example": "\"I sincerely apologize for the inconvenience — we will make it right.\""},
+            {"phrase": "I'm afraid...",                       "phonetic": "/aɪm əˈfreɪd/",                           "context": "La transmiterea unei veśti proaste diplomatic",     "example": "\"I'm afraid the excursion has been cancelled due to weather.\""},
+            {"phrase": "Shore excursion / tender port",       "phonetic": "/ʃɔːr ɪkˈskɜːrʒən ˈtendər pɔːrt/",        "context": "La informarea pasagerilor despre port",              "example": "\"Your shore excursion departs from Deck 4 at 08:00.\""},
+            {"phrase": "Embarkation / disembarkation",        "phonetic": "/ɮmbɑːrˈkeɪʃən dɪsɮmbɑːrˈkeɪʃən/",      "context": "La explicarea procesului de urcare/cobarâre",       "example": "\"Disembarkation begins at 07:00 on the last day of the cruise.\""},
+        ],
         "vocab": ["I completely understand your concern.", "Allow me to look into that for you.", "I sincerely apologize for the inconvenience.", "I'm afraid...", "Shore excursion / tender port", "Embarkation / disembarkation"]
     },
     "🎯 HR Interview": {
@@ -182,6 +486,14 @@ SCENARIOS = {
         
         OPENING: "Good morning, Anamaria! I'm Richard. Could you tell me about yourself and why you'd like to work on a cruise ship?"
         """,
+        "vocab_cards": [
+            {"phrase": "I believe my strengths are...",       "phonetic": "/aɪ bɪˈliːv maɪ streŋks ɑːr/",            "context": "La răspunsul la 'What are your strengths?'",        "example": "\"I believe my strengths are adaptability, communication and attention to detail.\""},
+            {"phrase": "In my previous experience...",        "phonetic": "/ɪn maɪ ˈpriːviəs ɪkˈspɪəriəns/",           "context": "La descrierea experienței anterioare",              "example": "\"In my previous experience at a hotel, I handled guest complaints daily.\""},
+            {"phrase": "I thrive under pressure.",            "phonetic": "/aɪ ξraɪv ˈʌndər ˈpreʃər/",               "context": "La demonstrarea rezistenței la stres",               "example": "\"I thrive under pressure — in fact, I perform best when it's busy.\""},
+            {"phrase": "I'm a quick learner.",                "phonetic": "/aɪm ə kwɪk ˈlɜːrnər/",                   "context": "La accentuarea capacității de adaptare",              "example": "\"I'm a quick learner — I pick up new procedures very fast.\""},
+            {"phrase": "Customer satisfaction is my priority.","phonetic": "/ˈkʌstəmər sætɪsˈfækʃən ɪz maɪ praɪˈɔrɪti/","context": "La declararea valorilor profesionale",               "example": "\"Above all, customer satisfaction is my priority in every interaction.\""},
+            {"phrase": "I'm eager to grow with the company.", "phonetic": "/aɪm ˈiːɡər tuː ɡrəʊ wɪð ðə ˈkʌmpəni/",    "context": "La încheierea interviului",                           "example": "\"I'm eager to grow with the company and contribute to your team's success.\""},
+        ],
         "vocab": ["I believe my strengths are...", "In my previous experience...", "I thrive under pressure.", "I'm a quick learner.", "Customer satisfaction is my priority.", "I'm eager to grow with the company."]
     },
 }
@@ -209,10 +521,18 @@ def xp_to_next(xp):
     return progress, total
 
 def award_xp(amount, reason=""):
+    xp_before = st.session_state.xp
     st.session_state.xp += amount
     st.session_state.xp_log.append(f"+{amount} XP — {reason}")
     if len(st.session_state.xp_log) > 5:
         st.session_state.xp_log.pop(0)
+    # Store last XP gain for floating popup
+    st.session_state.xp_last_gain = amount
+    # Detect level-up
+    lvl_before = get_level(xp_before)
+    lvl_after  = get_level(st.session_state.xp)
+    if lvl_after["name"] != lvl_before["name"] and not st.session_state.get("level_up_shown"):
+        st.session_state.level_up_pending = lvl_after
 
 def award_badge(badge_key):
     if badge_key not in st.session_state.badges:
@@ -237,6 +557,408 @@ def get_transcript():
         role = "🤖 Trainer" if msg["role"] == "assistant" else "👩 Anamaria"
         lines.append(f"### {role}:\n{msg['content']}\n\n")
     return "".join(lines)
+
+# --- FUNCȚIE DAILY STREAK ---
+def update_daily_streak():
+    """
+    Apelată după fiecare turn reușit.
+    - Numără turns din ziua curentă (today_turns).
+    - Când today_turns atinge 3, marchează ziua ca activă
+      și actualizează daily_streak.
+    - Dacă userul a sărit o zi, resetează streak-ul.
+    """
+    today = datetime.date.today()
+    today_iso = today.isoformat()
+
+    # Incrementează contorul de turns al zilei de azi
+    # (reset la 0 în STATE INIT; rămâne în memorie pe durata sesiunii)
+    st.session_state.today_turns += 1
+
+    # Nu facem nimic până la pragul de 3 turns—zi activă
+    if st.session_state.today_turns < 3:
+        return
+    if st.session_state.today_turns > 3:
+        # Deja marcată azi; nu recalculăm streakul din nou
+        return
+
+    # Azi e activă pentru prima oară în această sesiune
+    last = st.session_state.last_active_date  # datetime.date | None
+
+    if last is None:
+        # Prima zi de practică
+        st.session_state.daily_streak = 1
+    elif today == last:
+        # Același user a relansat pagina în aceeași zi — streak rămâne
+        pass
+    elif (today - last).days == 1:
+        # Ziua următoare consecutivă → streak crește
+        st.session_state.daily_streak += 1
+    else:
+        # A sărit cel puțin o zi → reset
+        st.session_state.daily_streak = 1
+
+    st.session_state.last_active_date = today
+
+    # Adaugă ziua în lista de zile active (fără duplicate)
+    if today_iso not in st.session_state.active_days:
+        st.session_state.active_days.append(today_iso)
+        # Păstrăm doar ultimele 30 de zile pentru a nu acumula prea mult
+        st.session_state.active_days = st.session_state.active_days[-30:]
+
+    # Badge streak 7 zile consecutive
+    if st.session_state.daily_streak >= 7:
+        award_badge("streak_week")
+
+
+# --- AUDIO FEEDBACK (Web Audio API via st.components) ---
+import streamlit.components.v1 as _st_components
+
+def play_sound(sound_type: str):
+    """
+    Injectează un oscilator Web Audio API prin st.components.v1.html().
+    sound_type: 'ding' | 'buzz' | 'fanfare' | 'thud'
+    Apelează doar dacă st.session_state.sound_on == True.
+    """
+    if not st.session_state.get("sound_on", True):
+        return
+
+    # Construiesc script-ul JS pentru fiecare tip de sunet
+    if sound_type == "ding":
+        # 880 Hz, 0.3s — sunet pozitiv ★★★
+        js = """
+        (function(){
+            var ctx = new (window.AudioContext || window.webkitAudioContext)();
+            var osc = ctx.createOscillator();
+            var gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(880, ctx.currentTime);
+            gain.gain.setValueAtTime(0.35, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.3);
+        })();
+        """
+    elif sound_type == "buzz":
+        # 220 Hz, 0.2s — sunet negativ ★☆☆
+        js = """
+        (function(){
+            var ctx = new (window.AudioContext || window.webkitAudioContext)();
+            var osc = ctx.createOscillator();
+            var gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(220, ctx.currentTime);
+            gain.gain.setValueAtTime(0.3, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.2);
+        })();
+        """
+    elif sound_type == "fanfare":
+        # 3 note ascendente: 523, 659, 784 Hz — badge nou
+        js = """
+        (function(){
+            var ctx = new (window.AudioContext || window.webkitAudioContext)();
+            var notes = [523, 659, 784];
+            notes.forEach(function(freq, i) {
+                var osc  = ctx.createOscillator();
+                var gain = ctx.createGain();
+                osc.connect(gain); gain.connect(ctx.destination);
+                osc.type = 'triangle';
+                var t = ctx.currentTime + i * 0.14;
+                osc.frequency.setValueAtTime(freq, t);
+                gain.gain.setValueAtTime(0.0, t);
+                gain.gain.linearRampToValueAtTime(0.3, t + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+                osc.start(t);
+                osc.stop(t + 0.14);
+            });
+        })();
+        """
+    elif sound_type == "thud":
+        # 100 Hz, 0.4s — pierdere ❤️
+        js = """
+        (function(){
+            var ctx = new (window.AudioContext || window.webkitAudioContext)();
+            var osc  = ctx.createOscillator();
+            var gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(150, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(60, ctx.currentTime + 0.4);
+            gain.gain.setValueAtTime(0.5, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.4);
+        })();
+        """
+    else:
+        return
+
+    _st_components.html(
+        f"<script>{js}</script>",
+        height=0,
+        scrolling=False
+    )
+
+
+# --- QUICK PRACTICE RENDER FUNCTION ---
+def render_quick_practice(scenario_name):
+    """Afișează modul Quick Practice (multiple-choice) pentru scenariul activ."""
+    exercises = QP_EXERCISES.get(scenario_name, [])
+    total = len(exercises)
+    if total == 0:
+        st.warning("Nu există exerciții pentru acest scenariu.")
+        return
+
+    idx = st.session_state.qp_index
+
+    # ── ECRAN FINAL ──────────────────────────────────────────────
+    if idx >= total:
+        pct_score = int(st.session_state.qp_correct / total * 100)
+        emoji = "🎉" if pct_score >= 80 else ("👍" if pct_score >= 60 else "💪")
+        st.markdown(f"""
+        <div class="qp-score-card">
+            <div class="qp-score-title">{emoji} ROUND COMPLET!</div>
+            <div class="qp-score-big">{pct_score}%</div>
+            <div class="qp-score-sub">
+                {st.session_state.qp_correct} / {total} răspunsuri corecte
+            </div>
+            <div class="qp-xp-earned">⚡ +{st.session_state.qp_xp} XP câştigat</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.write("")
+        if st.button("💬 Înapoim la Chat", use_container_width=True):
+            st.session_state.app_mode = "chat"
+            st.rerun()
+        if st.button("🔄 Repetă exercițiile", use_container_width=True):
+            st.session_state.qp_index = 0
+            st.session_state.qp_answered = False
+            st.session_state.qp_chosen = None
+            st.session_state.qp_xp = 0
+            st.session_state.qp_correct = 0
+            st.rerun()
+        return
+
+    # ── PROGRESS BAR ─────────────────────────────────────────────
+    prog_pct = int(idx / total * 100)
+    st.markdown(f"""
+    <div class="qp-container">
+        <div class="qp-progress-wrap">
+            <div class="qp-progress-fill" style="width:{prog_pct}%"></div>
+        </div>
+        <div class="qp-progress-label">Exercițiu {idx + 1} / {total}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── EXERCISE CARD ─────────────────────────────────────────────
+    ex = exercises[idx]
+    answered  = st.session_state.qp_answered
+    chosen    = st.session_state.qp_chosen
+    correct_i = ex["correct"]
+
+    # Construim HTML-ul opțiunilor
+    opts_html = ""
+    for i, opt in enumerate(ex["options"]):
+        if not answered:
+            cls = "qp-option"
+        elif i == correct_i:
+            cls = "qp-option correct"
+        elif i == chosen:
+            cls = "qp-option wrong"
+        else:
+            cls = "qp-option"
+        opts_html += f'<div class="{cls}">{chr(65+i)}. {opt}</div>'
+
+    st.markdown(f"""
+    <div class="qp-card">
+        <div class="qp-question">🤔 {ex['q']}</div>
+        <div class="qp-options">{opts_html}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── BUTOANE DE RĂSPUNS (afişate cu Streamlit ca să fie clickable) ──
+    if not answered:
+        btn_cols = st.columns(4)
+        for i, opt in enumerate(ex["options"]):
+            with btn_cols[i]:
+                if st.button(chr(65 + i), key=f"qp_opt_{idx}_{i}", use_container_width=True):
+                    st.session_state.qp_answered = True
+                    st.session_state.qp_chosen = i
+                    if i == correct_i:
+                        award_xp(15, "Quick Practice ★")
+                        st.session_state.qp_xp += 15
+                        st.session_state.qp_correct += 1
+                        play_sound("ding")       # răspuns corect
+                    else:
+                        # Pierde 1 ❤️ la răspuns greşit
+                        play_sound("buzz")       # răspuns greşit
+                        if st.session_state.hearts > 0:
+                            st.session_state.hearts -= 1
+                            st.session_state.heart_pulse = True
+                            play_sound("thud")   # pierdere ❤️
+                    st.rerun()
+    else:
+        # Afişează feedback + buton următor
+        is_correct = (chosen == correct_i)
+        if is_correct:
+            fb_cls  = "ok"
+            fb_text = "🎉 🎉 🎉 Excelent! Răspuns corect! +15 XP"
+        else:
+            fb_cls  = "err"
+            fb_text = f"❌ Greşit! Răspunsul corect era: <em>{ex['options'][correct_i]}</em>"
+        st.markdown(f'<div class="qp-feedback {fb_cls}">{fb_text}</div>', unsafe_allow_html=True)
+
+        if st.session_state.hearts <= 0:
+            # Game Over în QP — afișează avertisment
+            st.markdown("""
+            <div class="game-over-overlay">
+                <div class="game-over-modal">
+                    <div class="game-over-icon">💔</div>
+                    <div class="game-over-title">GAME OVER</div>
+                    <div class="game-over-sub">Ai rămas fără vieți!<br>Apasă <strong>RESET</strong> în sidebar.</div>
+                    <div style="font-size:2.5rem;letter-spacing:8px">🖤🖤🖤🖤🖤</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            return
+
+        if st.button("Următorul exercițiu ➜", use_container_width=True):
+            st.session_state.qp_index += 1
+            st.session_state.qp_answered = False
+            st.session_state.qp_chosen = None
+            st.rerun()
+
+
+# --- FLASHCARD RENDER FUNCTION ---
+def render_flashcards(scenario_name):
+    """Afişează modul Flashcards (flip 3D) pentru scenariul activ."""
+    sc_data = SCENARIOS.get(scenario_name, {})
+    cards = sc_data.get("vocab_cards", [])
+    if not cards:
+        st.warning("Nu există flashcard-uri pentru acest scenariu.")
+        return
+
+    total = len(cards)
+
+    # Dacă s-a schimbat scenariul, resetăm starea FC
+    if st.session_state.fc_scenario != scenario_name:
+        st.session_state.fc_scenario  = scenario_name
+        st.session_state.fc_known     = set()
+        st.session_state.fc_queue     = list(range(total))
+        st.session_state.fc_current   = 0
+        st.session_state.fc_flipped   = False
+
+    known   = st.session_state.fc_known
+    queue   = st.session_state.fc_queue
+    known_n = len(known)
+
+    # ── ECRAN FINAL ───────────────────────────────────────────
+    if len(queue) == 0 or known_n >= total:
+        award_badge("vocab_master")
+        play_sound("fanfare")
+        st.markdown(f"""
+        <div class="fc-done-card">
+            <div style="font-size:3rem;margin-bottom:10px">🏆</div>
+            <div style="font-family:'Orbitron',monospace;font-size:1.3rem;font-weight:900;color:var(--green);letter-spacing:2px;margin-bottom:8px">VOCAB MASTER!</div>
+            <div style="font-size:0.95rem;color:var(--text);margin-bottom:20px">
+                Ai stăpânit <strong>{total}/{total}</strong> fraze din <em>{scenario_name}</em>
+            </div>
+            <div style="font-size:2rem">🏆⭐🏆</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.write("")
+        if st.button("🔄 Reia de la capăt", use_container_width=True):
+            st.session_state.fc_known   = set()
+            st.session_state.fc_queue   = list(range(total))
+            st.session_state.fc_current = 0
+            st.session_state.fc_flipped = False
+            st.rerun()
+        if st.button("💬 Înapoim la Chat", use_container_width=True):
+            st.session_state.app_mode = "chat"
+            st.rerun()
+        return
+
+    # ── PROGRESS BAR ───────────────────────────────────────────
+    pct = int(known_n / total * 100)
+    st.markdown(f"""
+    <div class="fc-wrapper">
+        <div class="fc-progress-row">
+            <div class="fc-progress-bar-wrap">
+                <div class="fc-progress-bar-fill" style="width:{pct}%"></div>
+            </div>
+            <div class="fc-progress-label">📚 {known_n}/{total} fraze stăpânite</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── CARD CURENT ───────────────────────────────────────────
+    cur_pos  = min(st.session_state.fc_current, len(queue) - 1)
+    card_idx = queue[cur_pos]
+    card     = cards[card_idx]
+    flipped  = st.session_state.fc_flipped
+
+    flipped_cls = "fc-card flipped" if flipped else "fc-card"
+
+    # Fața CĂRD (front)
+    front_html = f"""
+    <div class="fc-face fc-front">
+        <div class="fc-label">🇷🇴 Contextul</div>
+        <div class="fc-context">{card['context']}</div>
+        <div class="fc-phrase">{card['phrase']}</div>
+        <div class="fc-tap-hint">Apasă „Răstoarnă” pentru a vedea răspunsul</div>
+    </div>
+    """
+
+    # Spatele CĂRD (back)
+    back_html = f"""
+    <div class="fc-face fc-back">
+        <div class="fc-label">🇬🇧 Fraza în Engleză</div>
+        <div class="fc-phrase">{card['phrase']}</div>
+        <div class="fc-phonetic">{card['phonetic']}</div>
+        <div class="fc-example">{card['example']}</div>
+        <div class="fc-tap-hint">Ai ştiut-o?</div>
+    </div>
+    """
+
+    st.markdown(f"""
+    <div class="fc-scene">
+        <div class="{flipped_cls}">
+            {front_html}
+            {back_html}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── BUTOANE ───────────────────────────────────────────
+    if not flipped:
+        if st.button("🔄 Răstoarnă cardul", use_container_width=True):
+            st.session_state.fc_flipped = True
+            st.rerun()
+    else:
+        b_col1, b_col2 = st.columns(2)
+        with b_col1:
+            if st.button("🤔 Nu ştiam", use_container_width=True):
+                # Pune cardul la coada din nou
+                play_sound("buzz")
+                queue.append(queue.pop(cur_pos))          # muta la coadă
+                st.session_state.fc_queue   = queue
+                st.session_state.fc_current = cur_pos % len(queue)
+                st.session_state.fc_flipped = False
+                st.rerun()
+        with b_col2:
+            if st.button("✅ Știam!", use_container_width=True):
+                play_sound("ding")
+                known.add(card_idx)
+                queue.pop(cur_pos)
+                st.session_state.fc_known   = known
+                st.session_state.fc_queue   = queue
+                st.session_state.fc_current = cur_pos % max(len(queue), 1)
+                st.session_state.fc_flipped = False
+                # XP bonus per frază învățată
+                award_xp(10, f"flashcard ★ {card['phrase'][:20]}")
+                st.rerun()
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Cruise Trainer 🚢", page_icon="🚢", layout="wide")
@@ -594,6 +1316,524 @@ hr { border-color: var(--border) !important; }
 .mission-title { color: var(--purple); font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
 .mission-text { color: var(--text); }
 
+/* ===== HEARTS SYSTEM ===== */
+.hearts-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin: 8px 0;
+}
+.hearts-label {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 4px;
+}
+.heart-active {
+    font-size: 1.35rem;
+    filter: drop-shadow(0 0 6px rgba(255,71,87,0.8));
+    display: inline-block;
+}
+.heart-lost {
+    font-size: 1.35rem;
+    filter: grayscale(1) brightness(0.4);
+    display: inline-block;
+}
+/* Pulse animation when a heart is lost */
+@keyframes heartPulse {
+    0%   { transform: scale(1); }
+    25%  { transform: scale(1.5); filter: drop-shadow(0 0 12px rgba(255,71,87,1)); }
+    50%  { transform: scale(0.85); }
+    75%  { transform: scale(1.2); }
+    100% { transform: scale(1); }
+}
+.heart-pulse {
+    animation: heartPulse 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ===== GAME OVER MODAL ===== */
+.game-over-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(5, 10, 24, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    backdrop-filter: blur(8px);
+}
+.game-over-modal {
+    background: linear-gradient(135deg, #1a0608, #2a0010);
+    border: 2px solid var(--red);
+    border-radius: 20px;
+    padding: 40px 48px;
+    text-align: center;
+    box-shadow: 0 0 60px rgba(255,71,87,0.4), inset 0 0 40px rgba(255,71,87,0.05);
+    animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    max-width: 420px;
+    width: 90%;
+}
+.game-over-icon  { font-size: 4rem; margin-bottom: 12px; }
+.game-over-title {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 1.3rem !important;
+    font-weight: 900 !important;
+    color: var(--red) !important;
+    text-shadow: 0 0 20px rgba(255,71,87,0.6) !important;
+    letter-spacing: 2px !important;
+    margin-bottom: 8px;
+}
+.game-over-sub {
+    color: var(--text);
+    font-size: 0.9rem;
+    margin-bottom: 24px;
+    line-height: 1.6;
+}
+
+/* ===== DAILY STREAK CALENDAR ===== */
+.cal-section {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin: 8px 0;
+}
+.cal-title {
+    font-size: 0.65rem;
+    color: var(--gold);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+.cal-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 2px;
+    margin-bottom: 6px;
+}
+.cal-cell {
+    flex: 1;
+    text-align: center;
+}
+.cal-dot  { font-size: 1.05rem; line-height: 1; }
+.cal-lbl  { font-size: 0.55rem; color: var(--text-dim); margin-top: 2px; }
+.cal-streak {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    text-align: center;
+    border-top: 1px solid var(--border);
+    padding-top: 6px;
+    margin-top: 4px;
+}
+.cal-streak strong { color: var(--cyan); }
+
+/* ===== QUICK PRACTICE ===== */
+.qp-container {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 10px 0 40px;
+}
+.qp-progress-wrap {
+    background: #0a1628;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    height: 8px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+.qp-progress-fill {
+    height: 8px;
+    border-radius: 8px;
+    background: linear-gradient(90deg, var(--cyan), var(--purple));
+    box-shadow: 0 0 10px rgba(0,245,255,0.5);
+    transition: width 0.5s ease;
+}
+.qp-progress-label {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    text-align: right;
+    margin-bottom: 18px;
+    letter-spacing: 0.5px;
+}
+.qp-card {
+    background: linear-gradient(135deg, #080f20, #0d1a30);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 28px 32px;
+    margin-bottom: 20px;
+    position: relative;
+    overflow: hidden;
+}
+.qp-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--cyan), var(--purple));
+}
+.qp-question {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 24px;
+    line-height: 1.5;
+}
+.qp-options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.qp-option {
+    background: var(--bg-panel);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    font-size: 0.92rem;
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: left;
+    font-family: 'Exo 2', sans-serif !important;
+}
+.qp-option:hover { border-color: var(--cyan); color: #fff; background: #0d2040; }
+.qp-option.correct {
+    background: linear-gradient(135deg, #001a0a, #002a14) !important;
+    border-color: var(--green) !important;
+    color: var(--green) !important;
+    box-shadow: 0 0 16px rgba(0,255,136,0.2);
+}
+.qp-option.wrong {
+    background: linear-gradient(135deg, #1a0005, #2a000a) !important;
+    border-color: var(--red) !important;
+    color: var(--red) !important;
+    box-shadow: 0 0 16px rgba(255,71,87,0.2);
+    animation: shakeCard 0.4s ease;
+}
+@keyframes shakeCard {
+    0%,100% { transform: translateX(0); }
+    20%      { transform: translateX(-8px); }
+    40%      { transform: translateX(8px); }
+    60%      { transform: translateX(-6px); }
+    80%      { transform: translateX(6px); }
+}
+.qp-feedback {
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-top: 16px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-align: center;
+    animation: slideIn 0.3s ease;
+}
+.qp-feedback.ok  { background: linear-gradient(135deg,#001a0a,#002a14); border:1px solid var(--green); color:var(--green); }
+.qp-feedback.err { background: linear-gradient(135deg,#1a0005,#2a000a); border:1px solid var(--red);   color:var(--red); }
+.qp-score-card {
+    background: linear-gradient(135deg, #060d1a, #0a1628);
+    border: 2px solid var(--gold);
+    border-radius: 20px;
+    padding: 36px 40px;
+    text-align: center;
+    box-shadow: 0 0 40px rgba(255,215,0,0.15);
+    animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1);
+}
+.qp-score-title {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 1.4rem !important;
+    font-weight: 900 !important;
+    color: var(--gold) !important;
+    letter-spacing: 2px !important;
+    margin-bottom: 12px;
+}
+.qp-score-big {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 3.5rem !important;
+    font-weight: 900 !important;
+    color: var(--cyan) !important;
+    text-shadow: 0 0 30px rgba(0,245,255,0.5) !important;
+    line-height: 1 !important;
+    margin: 16px 0 !important;
+}
+.qp-score-sub  { font-size: 0.9rem; color: var(--text); margin-bottom: 24px; }
+.qp-xp-earned  { font-size: 1.2rem; color: var(--green); font-weight: 700; margin-bottom: 8px; }
+.mode-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, #0a2040, #0d2a55);
+    color: var(--cyan);
+    border: 1px solid var(--cyan);
+    border-radius: 8px;
+    padding: 7px 18px;
+    font-family: 'Exo 2', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: all 0.2s;
+    margin-top: 10px;
+}
+.mode-toggle-btn:hover {
+    background: linear-gradient(135deg,#00f5ff22,#00f5ff33);
+    box-shadow: 0 0 15px rgba(0,245,255,0.3);
+}
+
+/* ===== XP FLOAT POPUP ===== */
+@keyframes fadeUpOut {
+    0%   { opacity: 0; transform: translateY(0px) scale(0.8); }
+    15%  { opacity: 1; transform: translateY(-8px) scale(1.1); }
+    70%  { opacity: 1; transform: translateY(-28px) scale(1); }
+    100% { opacity: 0; transform: translateY(-52px) scale(0.9); }
+}
+.xp-float {
+    position: fixed;
+    bottom: 120px;
+    right: 30px;
+    font-family: 'Orbitron', monospace;
+    font-size: 1.1rem;
+    font-weight: 900;
+    color: var(--green);
+    text-shadow: 0 0 16px rgba(0,255,136,0.9);
+    pointer-events: none;
+    z-index: 9990;
+    animation: fadeUpOut 1.6s ease forwards;
+}
+
+/* ===== LEVEL-UP MODAL ===== */
+@keyframes confettiFall {
+    0%   { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(320px) rotate(720deg); opacity: 0; }
+}
+@keyframes levelGlow {
+    0%,100% { text-shadow: 0 0 20px rgba(255,215,0,0.6); }
+    50%      { text-shadow: 0 0 60px rgba(255,215,0,1), 0 0 120px rgba(255,215,0,0.5); }
+}
+.lvlup-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(2, 8, 20, 0.93);
+    backdrop-filter: blur(10px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9998;
+}
+.lvlup-modal {
+    background: linear-gradient(135deg, #07111f, #0d1e38);
+    border: 2px solid var(--gold);
+    border-radius: 24px;
+    padding: 48px 56px;
+    text-align: center;
+    box-shadow: 0 0 80px rgba(255,215,0,0.25), inset 0 0 60px rgba(255,215,0,0.04);
+    animation: popIn 0.6s cubic-bezier(0.34,1.56,0.64,1);
+    max-width: 460px;
+    width: 90%;
+    position: relative;
+    overflow: hidden;
+}
+.lvlup-tag {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 3px;
+    color: var(--gold);
+    opacity: 0.7;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+.lvlup-title {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 2rem !important;
+    font-weight: 900 !important;
+    color: var(--gold) !important;
+    animation: levelGlow 1.5s ease-in-out infinite;
+    margin-bottom: 14px;
+    line-height: 1.2;
+}
+.lvlup-msg {
+    font-size: 1rem;
+    color: var(--text);
+    margin-bottom: 28px;
+    line-height: 1.6;
+}
+/* confetti particles */
+.confetti-wrap {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+    overflow: hidden;
+}
+.confetti-p {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    animation: confettiFall linear forwards;
+}
+
+/* ===== FLASHCARDS ===== */
+.fc-wrapper {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 10px 0 40px;
+}
+.fc-progress-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+}
+.fc-progress-bar-wrap {
+    flex: 1;
+    background: #0a1628;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    height: 8px;
+    overflow: hidden;
+    margin-right: 12px;
+}
+.fc-progress-bar-fill {
+    height: 8px;
+    border-radius: 8px;
+    background: linear-gradient(90deg, var(--green), var(--cyan));
+    box-shadow: 0 0 10px rgba(0,255,136,0.4);
+    transition: width 0.5s ease;
+}
+.fc-progress-label {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+/* ── 3D flip container ── */
+.fc-scene {
+    perspective: 1000px;
+    width: 100%;
+    height: 280px;
+    margin-bottom: 20px;
+}
+.fc-card {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    transform-style: preserve-3d;
+    transition: transform 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+}
+.fc-card.flipped {
+    transform: rotateY(180deg);
+}
+.fc-face {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    border-radius: 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 28px 32px;
+    box-sizing: border-box;
+}
+.fc-front {
+    background: linear-gradient(135deg, #080f20, #0d1a30);
+    border: 1px solid var(--border);
+}
+.fc-front::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    border-radius: 18px 18px 0 0;
+    background: linear-gradient(90deg, var(--cyan), var(--purple));
+}
+.fc-back {
+    background: linear-gradient(135deg, #040e1a, #081422);
+    border: 1px solid var(--cyan);
+    transform: rotateY(180deg);
+    box-shadow: 0 0 30px rgba(0,245,255,0.08);
+}
+.fc-back::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    border-radius: 18px 18px 0 0;
+    background: linear-gradient(90deg, var(--green), var(--cyan));
+}
+.fc-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+}
+.fc-context {
+    font-size: 0.85rem;
+    color: var(--cyan);
+    margin-bottom: 14px;
+    font-style: italic;
+}
+.fc-phrase {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+    line-height: 1.4;
+}
+.fc-tap-hint {
+    position: absolute;
+    bottom: 18px;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+}
+.fc-phonetic {
+    font-size: 0.9rem;
+    color: var(--gold);
+    margin: 10px 0 14px;
+    font-family: serif !important;
+    letter-spacing: 0.5px;
+}
+.fc-example {
+    font-size: 0.82rem;
+    color: var(--text);
+    text-align: center;
+    font-style: italic;
+    line-height: 1.5;
+    border-left: 2px solid var(--cyan);
+    padding-left: 12px;
+    margin-top: 8px;
+}
+.fc-btn-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+}
+.fc-done-card {
+    background: linear-gradient(135deg, #060d1a, #0a1628);
+    border: 2px solid var(--green);
+    border-radius: 20px;
+    padding: 36px 40px;
+    text-align: center;
+    box-shadow: 0 0 40px rgba(0,255,136,0.12);
+    animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1);
+}
+
+.xp-next-hint {
+    font-size: 0.67rem;
+    color: var(--text-dim);
+    text-align: right;
+    margin-top: 5px;
+    letter-spacing: 0.3px;
+}
+
 /* ===== RESPONSIVE DESIGN ===== */
 @media (max-width: 768px) {
     .game-header { padding: 16px 20px 12px; margin-bottom: 12px; }
@@ -626,14 +1866,138 @@ if "new_badge"             not in st.session_state: st.session_state.new_badge =
 if "streak"                not in st.session_state: st.session_state.streak = 0
 if "total_stars"           not in st.session_state: st.session_state.total_stars = 0
 if "scenarios_tried"       not in st.session_state: st.session_state.scenarios_tried = set()
+# --- HEARTS SYSTEM STATE ---
+if "hearts"                not in st.session_state: st.session_state.hearts = 5      # Vieți rămase (max 5)
+if "heart_streak"          not in st.session_state: st.session_state.heart_streak = 0 # Streak ★★★ consecutive pentru recuperare
+if "heart_pulse"           not in st.session_state: st.session_state.heart_pulse = False # Trigger animație pierdere inimă
+# --- DAILY STREAK STATE ---
+# last_active_date : datetime.date | None  — ultima zi cu minim 3 turns
+# daily_streak     : int                  — zile consecutive
+# active_days      : list[str]            — zile ISO cu activitate (pentru calendar)
+# today_turns      : int                  — turns în ziua curentă (pentru pragul de 3)
+if "last_active_date"  not in st.session_state: st.session_state.last_active_date = None
+if "daily_streak"      not in st.session_state: st.session_state.daily_streak = 0
+if "active_days"       not in st.session_state: st.session_state.active_days = []
+if "today_turns"       not in st.session_state: st.session_state.today_turns = 0
+# --- QUICK PRACTICE STATE ---
+if "app_mode"          not in st.session_state: st.session_state.app_mode = "chat"   # "chat" | "qp"
+if "qp_index"          not in st.session_state: st.session_state.qp_index = 0        # index exercițiu curent
+if "qp_answered"       not in st.session_state: st.session_state.qp_answered = False  # a răspuns la exercițiul curent?
+if "qp_chosen"         not in st.session_state: st.session_state.qp_chosen = None    # indexul opțiunii alese
+if "qp_xp"             not in st.session_state: st.session_state.qp_xp = 0           # XP acumulat în sesiunea QP
+if "qp_correct"        not in st.session_state: st.session_state.qp_correct = 0      # număr răspunsuri corecte
+# --- XP VISUAL STATE ---
+if "xp_last_gain"      not in st.session_state: st.session_state.xp_last_gain = 0       # ultimul căştig XP
+if "level_up_pending"  not in st.session_state: st.session_state.level_up_pending = None # nivel nou de afişat
+if "level_up_shown"    not in st.session_state: st.session_state.level_up_shown = False  # a fost afişat?
+# --- SOUND STATE ---
+if "sound_on"          not in st.session_state: st.session_state.sound_on = True      # toggle audio feedback
+# --- FLASHCARD STATE ---
+if "fc_known"          not in st.session_state: st.session_state.fc_known = set()    # indici fraze stăpânite
+if "fc_queue"          not in st.session_state: st.session_state.fc_queue = []       # indici rămaşi de revăzut
+if "fc_current"        not in st.session_state: st.session_state.fc_current = 0      # index în fc_queue
+if "fc_flipped"        not in st.session_state: st.session_state.fc_flipped = False  # card răsturnat?
+if "fc_scenario"       not in st.session_state: st.session_state.fc_scenario = None  # scenariu activ în FC
+
+# --- XP FLOAT POPUP (inject after each turn) ---
+if st.session_state.get("xp_last_gain", 0) > 0:
+    _gain = st.session_state.xp_last_gain
+    _st_components.html(
+        f'''<style>
+        @keyframes fadeUpOut {{
+            0%   {{ opacity:0; transform:translateY(0) scale(0.8); }}
+            15%  {{ opacity:1; transform:translateY(-8px) scale(1.1); }}
+            70%  {{ opacity:1; transform:translateY(-28px) scale(1); }}
+            100% {{ opacity:0; transform:translateY(-52px) scale(0.9); }}
+        }}
+        .xp-float-el {{
+            position:fixed; bottom:110px; right:28px;
+            font-family:Orbitron,monospace; font-size:1.1rem; font-weight:900;
+            color:#00ff88; text-shadow:0 0 16px rgba(0,255,136,0.9);
+            pointer-events:none; z-index:9990;
+            animation:fadeUpOut 1.6s ease forwards;
+        }}
+        </style><div class="xp-float-el">+{_gain} XP ⚡</div>''',
+        height=0, scrolling=False
+    )
+    st.session_state.xp_last_gain = 0
+
+# --- LEVEL-UP MODAL ---
+if st.session_state.get("level_up_pending") and not st.session_state.get("level_up_shown"):
+    _lvl = st.session_state.level_up_pending
+    _msg = _lvl.get("unlock_msg", "")
+    _col = _lvl.get("color", "#ffd700")
+    # Generate 30 confetti particles
+    _particles = ""
+    import random as _rnd
+    _colors = ["#ffd700","#00f5ff","#ff4757","#00ff88","#a855f7","#ff9f43","#fff"]
+    for _i in range(30):
+        _x    = _rnd.randint(0, 100)
+        _delay= round(_rnd.uniform(0, 0.8), 2)
+        _dur  = round(_rnd.uniform(1.2, 2.2), 2)
+        _c    = _rnd.choice(_colors)
+        _sz   = _rnd.randint(6, 12)
+        _particles += (
+            f'<div class="confetti-p" style="left:{_x}%;width:{_sz}px;height:{_sz}px;'
+            f'background:{_c};animation-duration:{_dur}s;animation-delay:{_delay}s"></div>'
+        )
+    st.markdown(f"""
+    <div class="lvlup-overlay">
+        <div class="lvlup-modal">
+            <div class="confetti-wrap">{_particles}</div>
+            <div class="lvlup-tag">⚡ LEVEL UP!</div>
+            <div class="lvlup-title">{_lvl['name']}</div>
+            <div class="lvlup-msg">{_msg}</div>
+            <div style="font-size:2rem;margin-bottom:16px">🎉🏆🎉</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("CONTINUĂ 🚀", use_container_width=True):
+        st.session_state.level_up_shown  = True
+        st.session_state.level_up_pending = None
+        st.rerun()
+    st.stop()
 
 # --- HEADER ---
-st.markdown("""
-<div class="game-header">
-    <div class="game-title">🚢 CRUISE ENGLISH TRAINER</div>
-    <div class="game-subtitle">Training pentru <strong>Anamaria</strong> — misiunea ta pe vas începe aici</div>
-</div>
-""", unsafe_allow_html=True)
+sc_info_hdr = SCENARIOS[st.session_state.last_scenario] if st.session_state.last_scenario in SCENARIOS else SCENARIOS[list(SCENARIOS.keys())[0]]
+col_hdr, col_btn = st.columns([5, 1])
+with col_hdr:
+    st.markdown("""
+    <div class="game-header">
+        <div class="game-title">🚢 CRUISE ENGLISH TRAINER</div>
+        <div class="game-subtitle">Training pentru <strong>Anamaria</strong> — misiunea ta pe vas începe aici</div>
+    </div>
+    """, unsafe_allow_html=True)
+with col_btn:
+    st.write("")
+    st.write("")
+    mode = st.session_state.app_mode
+    # Buton 1: Chat
+    if mode == "chat":
+        st.markdown('<span style="font-size:0.72rem;color:var(--cyan);">▶ Chat Mode</span>', unsafe_allow_html=True)
+    else:
+        if st.button("💬 Chat", use_container_width=True):
+            st.session_state.app_mode = "chat"
+            st.rerun()
+    # Buton 2: Quick Practice
+    if mode == "qp":
+        st.markdown('<span style="font-size:0.72rem;color:var(--cyan);">▶ Quick Practice</span>', unsafe_allow_html=True)
+    else:
+        if st.button("⚡ Quick", use_container_width=True):
+            st.session_state.app_mode = "qp"
+            st.session_state.qp_index = 0
+            st.session_state.qp_answered = False
+            st.session_state.qp_chosen = None
+            st.session_state.qp_xp = 0
+            st.session_state.qp_correct = 0
+            st.rerun()
+    # Buton 3: Flashcards
+    if mode == "fc":
+        st.markdown('<span style="font-size:0.72rem;color:var(--cyan);">▶ Flashcards</span>', unsafe_allow_html=True)
+    else:
+        if st.button("🃏 Cards", use_container_width=True):
+            st.session_state.app_mode = "fc"
+            st.rerun()
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -650,6 +2014,13 @@ with st.sidebar:
             st.session_state.messages = []
             st.session_state.chat_session = None
             st.session_state.last_processed_audio = None
+            # --- HEARTS: resetare la 5 vieți pentru noua sesiune ---
+            st.session_state.hearts = 5
+            st.session_state.heart_streak = 0
+            st.session_state.heart_pulse = False
+            st.session_state.level_up_shown = False
+            st.session_state.level_up_pending = None
+            st.session_state.xp_last_gain = 0
             st.rerun()
     with col2:
         if st.button("📊 RAPORT", use_container_width=True):
@@ -675,10 +2046,25 @@ with st.sidebar:
 
     st.divider()
 
+    # --- SOUND TOGGLE ---
+    sound_label = "🔊 Sunet ON" if st.session_state.sound_on else "🔇 Sunet OFF"
+    if st.button(sound_label, use_container_width=True):
+        st.session_state.sound_on = not st.session_state.sound_on
+        st.rerun()
+
+    st.divider()
+
     # XP & Level
     current_level = get_level(st.session_state.xp)
     xp_prog, xp_total = xp_to_next(st.session_state.xp)
     pct = int(xp_prog / xp_total * 100) if xp_total > 0 else 100
+
+    next_lvl, _ = get_next_level(st.session_state.xp)
+    if next_lvl:
+        xp_to_next_val = next_lvl["min_xp"] - st.session_state.xp
+        next_hint = f'<div class="xp-next-hint">→ {xp_to_next_val} XP până la {next_lvl["name"]}</div>'
+    else:
+        next_hint = '<div class="xp-next-hint">👑 Nivel maxim atins!</div>'
 
     st.markdown(f"""
     <div class="xp-container">
@@ -689,6 +2075,7 @@ with st.sidebar:
         <div class="xp-bar-bg">
             <div class="xp-bar-fill" style="width:{pct}%"></div>
         </div>
+        {next_hint}
     </div>
     """, unsafe_allow_html=True)
 
@@ -709,6 +2096,57 @@ with st.sidebar:
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # --- HEARTS ROW (lângă stats-row) ---
+    hearts_html_parts = []
+    for i in range(MAX_HEARTS):
+        if i < st.session_state.hearts:
+            # Ultima inimă activă primește clasa pulse dacă tocmai a pierdut
+            is_last_active = (i == st.session_state.hearts - 1) and st.session_state.heart_pulse
+            pulse_cls = " heart-pulse" if is_last_active else ""
+            hearts_html_parts.append(f'<span class="heart-active{pulse_cls}">❤️</span>')
+        else:
+            hearts_html_parts.append('<span class="heart-lost">🖤</span>')
+    hearts_inner = "".join(hearts_html_parts)
+    st.markdown(
+        f'<div class="hearts-row"><span class="hearts-label">VIEȚI</span>{hearts_inner}</div>',
+        unsafe_allow_html=True
+    )
+    # Resetăm flag-ul de pulse după afișare
+    st.session_state.heart_pulse = False
+
+    # --- DAILY STREAK MINI-CALENDAR ---
+    today = datetime.date.today()
+    today_iso = today.isoformat()
+
+    # Construim lista ultimelor 7 zile (cea mai veche prima)
+    week_days = [(today - datetime.timedelta(days=i)) for i in range(6, -1, -1)]  # [d-6 .. azi]
+
+    cal_parts = []
+    for day in week_days:
+        d_iso = day.isoformat()
+        if day == today:
+            dot = "🔵"  # Azi — indiferent de activitate
+        elif d_iso in st.session_state.active_days:
+            dot = "🟢"  # Zi cu activitate
+        else:
+            dot = "⬜"  # Zi fără activitate
+        # Numele scurt al zilei în română (Lu Ma Mi Jo Vi Sâ Du)
+        RO_DAYS = ["Lu", "Ma", "Mi", "Jo", "Vi", "Sâ", "Du"]
+        day_lbl = RO_DAYS[day.weekday()]
+        cal_parts.append(
+            f'<div class="cal-cell"><div class="cal-dot">{dot}</div>'
+            f'<div class="cal-lbl">{day_lbl}</div></div>'
+        )
+
+    cal_html = (
+        '<div class="cal-section">'
+        '<div class="cal-title">📅 Activitate — 7 zile</div>'
+        f'<div class="cal-row">{" ".join(cal_parts)}</div>'
+        f'<div class="cal-streak">🗓️ Streak zilnic: <strong>{st.session_state.daily_streak}</strong> zile</div>'
+        '</div>'
+    )
+    st.markdown(cal_html, unsafe_allow_html=True)
 
     # XP log
     if st.session_state.xp_log:
@@ -765,189 +2203,232 @@ if st.session_state.last_scenario != selected_scenario_name:
     st.session_state.scenarios_tried.add(selected_scenario_name)
     if len(st.session_state.scenarios_tried) >= len(SCENARIOS):
         award_badge("all_scenarios")
+    # Resetare QP la schimbarea scenariului
+    st.session_state.qp_index = 0
+    st.session_state.qp_answered = False
+    st.session_state.qp_chosen = None
+    st.session_state.qp_xp = 0
+    st.session_state.qp_correct = 0
     st.rerun()
 
 st.session_state.scenarios_tried.add(selected_scenario_name)
 
-# --- INIT CHAT ---
-if st.session_state.chat_session is None:
-    sc = SCENARIOS[selected_scenario_name]
-    model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=sc["prompt"])
-    st.session_state.chat_session = model.start_chat(history=[])
-    try:
-        initial = st.session_state.chat_session.send_message("Start the roleplay with your opening line. Be engaging and fun.")
-        st.session_state.messages.append({"role": "assistant", "content": initial.text})
-    except Exception as e:
-        st.session_state.chat_session = None
-        if "429" in str(e) or "quota" in str(e).lower():
-            st.warning("⏳ Ai atins limita de trafic a API-ului Google (Rate Limit / Quota). Te rog așteaptă câteva momente și apasă butonul RESET.")
-        else:
-            st.error(f"Eroare la inițializarea sesiunii: {e}")
-        st.stop()
+# --- MAIN AREA ROUTING ---
+if st.session_state.app_mode == "qp":
+    # ── QUICK PRACTICE MODE ────────────────────────────────────
+    render_quick_practice(selected_scenario_name)
+elif st.session_state.app_mode == "fc":
+    # ── FLASHCARD MODE ───────────────────────────────────────────
+    render_flashcards(selected_scenario_name)
+else:
+    # -- CHAT MODE --------------------------------------------------
 
-# --- NEW BADGE POPUP ---
-if st.session_state.new_badge:
-    badge = BADGES[st.session_state.new_badge]
+    # --- INIT CHAT ---
+    if st.session_state.chat_session is None:
+        sc = SCENARIOS[selected_scenario_name]
+        model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=sc["prompt"])
+        st.session_state.chat_session = model.start_chat(history=[])
+        try:
+            initial = st.session_state.chat_session.send_message("Start the roleplay with your opening line. Be engaging and fun.")
+            st.session_state.messages.append({"role": "assistant", "content": initial.text})
+        except Exception as e:
+            st.session_state.chat_session = None
+            if "429" in str(e) or "quota" in str(e).lower():
+                st.warning("⏳ Ai atins limita de trafic a API-ului Google (Rate Limit / Quota). Te rog ăşteaptă câteva momente şi apasă butonul RESET.")
+            else:
+                st.error(f"Eroare la inițializarea sesiunii: {e}")
+            st.stop()
+
+    # --- NEW BADGE POPUP ---
+    if st.session_state.new_badge:
+        badge = BADGES[st.session_state.new_badge]
+        st.markdown(f"""
+        <div class="badge-popup">
+            <div style="font-size:2rem">{badge['icon']}</div>
+            <div style="font-family:'Orbitron',monospace;color:#ffd700;font-size:0.9rem;font-weight:700;margin:4px 0">ACHIEVEMENT UNLOCKED!</div>
+            <div style="color:#fff;font-weight:600">{badge['name']}</div>
+            <div style="color:#a0a0a0;font-size:0.8em">{badge['desc']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.session_state.new_badge = None
+
+    # --- GAME OVER MODAL (0 vieți rămase) ---
+    if st.session_state.hearts <= 0:
+        st.markdown("""
+        <div class="game-over-overlay">
+            <div class="game-over-modal">
+                <div class="game-over-icon">💔</div>
+                <div class="game-over-title">GAME OVER</div>
+                <div class="game-over-sub">
+                    Ai rămas fără vieți!<br>
+                    Apasă <strong>RESET</strong> în sidebar pentru a continua misiunea.
+                </div>
+                <div style="font-size:2.5rem;letter-spacing:8px">🖤🖤🖤🖤🖤</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.stop()  # Blochează tot ce urmează
+
+    # --- SCENARIO BADGE ---
+    sc_info = SCENARIOS[selected_scenario_name]
     st.markdown(f"""
-    <div class="badge-popup">
-        <div style="font-size:2rem">{badge['icon']}</div>
-        <div style="font-family:'Orbitron',monospace;color:#ffd700;font-size:0.9rem;font-weight:700;margin:4px 0">ACHIEVEMENT UNLOCKED!</div>
-        <div style="color:#fff;font-weight:600">{badge['name']}</div>
-        <div style="color:#a0a0a0;font-size:0.8em">{badge['desc']}</div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.session_state.new_badge = None
-
-# --- SCENARIO BADGE ---
-sc_info = SCENARIOS[selected_scenario_name]
-st.markdown(f"""
 <div class="scenario-active">
     {sc_info['icon']} {selected_scenario_name}
     &nbsp;·&nbsp; Difficulty: {sc_info['difficulty']}
 </div>
 """, unsafe_allow_html=True)
 
-# --- MESSAGES ---
-chat_container = st.container()
-with chat_container:
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            content = msg["content"]
-            has_feedback = "**🔍 Feedback:**" in content
+    # --- MESSAGES ---
+    chat_container = st.container()
+    with chat_container:
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                content = msg["content"]
+                has_feedback = "**🔍 Feedback:**" in content
 
-            if has_feedback:
-                char_map = {
-                    "🛍️ Shop – Duty Free":      f"**🛍️ James:**",
-                    "🍽️ Waiter – Dining Room":  f"**🍽️ Marco:**",
-                    "🍹 Bartender – Pool Bar":   f"**🍹 Jake:**",
-                    "🛎️ Guest Services":         f"**🛎️ Patricia:**",
-                    "🎯 HR Interview":           f"**👔 Richard:**",
-                }
-                marker = char_map.get(selected_scenario_name, "")
-                split_point = content.find(marker) if marker else -1
+                if has_feedback:
+                    char_map = {
+                        "🛗️ Shop – Duty Free":      f"**🛗️ James:**",
+                        "🍽️ Waiter – Dining Room":  f"**🍽️ Marco:**",
+                        "🍹 Bartender – Pool Bar":         f"**🍹 Jake:**",
+                        "🛝️ Guest Services":               f"**🛝️ Patricia:**",
+                        "🎯 HR Interview":                       f"**👔 Richard:**",
+                    }
+                    marker = char_map.get(selected_scenario_name, "")
+                    split_point = content.find(marker) if marker else -1
 
-                # Extract stars for display
-                stars_display = ""
-                if "★★★" in content:
-                    stars_display = '<div class="stars-earned">★★★ Perfect!</div>'
-                elif "★★☆" in content:
-                    stars_display = '<div class="stars-earned">★★☆ Good job!</div>'
-                elif "★☆☆" in content:
-                    stars_display = '<div class="stars-earned">★☆☆ Keep going!</div>'
+                    stars_display = ""
+                    if "★★★" in content:
+                        stars_display = '<div class="stars-earned">★★★ Perfect!</div>'
+                    elif "★★☆" in content:
+                        stars_display = '<div class="stars-earned">★★☆ Good job!</div>'
+                    elif "★☆☆" in content:
+                        stars_display = '<div class="stars-earned">★☆☆ Keep going!</div>'
 
-                if split_point > 0:
-                    feedback_part = content[:split_point].strip()
-                    roleplay_part = content[split_point:].strip()
-                    st.markdown(f'<div class="feedback-box">{feedback_part}{stars_display}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="roleplay-box">{roleplay_part}</div>', unsafe_allow_html=True)
+                    if split_point > 0:
+                        feedback_part = content[:split_point].strip()
+                        roleplay_part = content[split_point:].strip()
+                        st.markdown(f'<div class="feedback-box">{feedback_part}{stars_display}</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="roleplay-box">{roleplay_part}</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(content)
                 else:
                     st.markdown(content)
-            else:
-                st.markdown(content)
 
-# --- INPUT ---
-footer = st.container()
-with footer:
-    audio_val = st.audio_input("🎤 Vorbește")
-    text_val = st.chat_input("Scrie în Engleză...")
+    # --- INPUT (blocat când hearts == 0) ---
+    footer = st.container()
+    with footer:
+        audio_val = st.audio_input("🎤 Vorbeşte")
+        text_val = st.chat_input("Scrie în Engleză...")
 
-    user_message = None
-    is_audio = False
-    should_process = False
+        user_message = None
+        is_audio = False
+        should_process = False
 
-    if audio_val and st.session_state.last_processed_audio != audio_val.file_id:
-        user_message = audio_val
-        is_audio = True
-        should_process = True
-        st.session_state.last_processed_audio = audio_val.file_id
-    elif text_val:
-        user_message = text_val
-        should_process = True
+        if audio_val and st.session_state.last_processed_audio != audio_val.file_id:
+            user_message = audio_val
+            is_audio = True
+            should_process = True
+            st.session_state.last_processed_audio = audio_val.file_id
+        elif text_val:
+            user_message = text_val
+            should_process = True
 
-    if should_process and user_message:
-        with chat_container:
-            with st.chat_message("user"):
-                if is_audio: st.audio(user_message)
-                else: st.markdown(user_message)
+        if should_process and user_message:
+            with chat_container:
+                with st.chat_message("user"):
+                    if is_audio: st.audio(user_message)
+                    else: st.markdown(user_message)
 
-        content_to_save = "🎤 *Audio Message*" if is_audio else user_message
-        st.session_state.messages.append({"role": "user", "content": content_to_save})
+            content_to_save = "🎤 *Audio Message*" if is_audio else user_message
+            st.session_state.messages.append({"role": "user", "content": content_to_save})
 
-        # Badges
-        if not "first_message" in st.session_state.badges:
-            award_badge("first_message")
-        if is_audio and "audio_used" not in st.session_state.badges:
-            award_badge("audio_used")
-        turns_now = count_turns()
-        if turns_now >= 5  and "5_turns"  not in st.session_state.badges: award_badge("5_turns")
-        if turns_now >= 10 and "10_turns" not in st.session_state.badges: award_badge("10_turns")
+            if "first_message" not in st.session_state.badges:
+                award_badge("first_message")
+            if is_audio and "audio_used" not in st.session_state.badges:
+                award_badge("audio_used")
+            turns_now = count_turns()
+            if turns_now >= 5  and "5_turns"  not in st.session_state.badges: award_badge("5_turns")
+            if turns_now >= 10 and "10_turns" not in st.session_state.badges: award_badge("10_turns")
 
-        char_map2 = {
-            "🛍️ Shop – Duty Free":     "**🛍️ James:**",
-            "🍽️ Waiter – Dining Room": "**🍽️ Marco:**",
-            "🍹 Bartender – Pool Bar":  "**🍹 Jake:**",
-            "🛎️ Guest Services":        "**🛎️ Patricia:**",
-            "🎯 HR Interview":          "**👔 Richard:**",
-        }
-        char_tag = char_map2.get(selected_scenario_name, "**[Character]:**")
-        reminder = f" (ALWAYS start with **🔍 Feedback:** block with stars rating ★★★/★★☆/★☆☆, then {char_tag} for roleplay)"
+            char_map2 = {
+                "🛗️ Shop – Duty Free":     "**🛗️ James:**",
+                "🍽️ Waiter – Dining Room": "**🍽️ Marco:**",
+                "🍹 Bartender – Pool Bar":        "**🍹 Jake:**",
+                "🛝️ Guest Services":              "**🛝️ Patricia:**",
+                "🎯 HR Interview":                      "**👔 Richard:**",
+            }
+            char_tag = char_map2.get(selected_scenario_name, "**[Character]:**")
+            reminder = f" (ALWAYS start with **🔍 Feedback:** block with stars rating ★★★/★★☆/★☆☆, then {char_tag} for roleplay)"
 
-        try:
-            with st.spinner("⚡ Procesează..."):
-                if is_audio:
-                    blob = {"mime_type": user_message.type, "data": user_message.getvalue()}
-                    response = st.session_state.chat_session.send_message(["Analyze English quality of this audio.", blob, reminder])
-                else:
-                    response = st.session_state.chat_session.send_message(user_message + reminder)
-
-            resp_text = response.text
-            st.session_state.messages.append({"role": "assistant", "content": resp_text})
-
-            # XP & streak logic
-            stars = count_stars_in_response(resp_text)
-            st.session_state.total_stars += stars
-
-            xp_earned = XP_REWARDS["message_sent"]
-            reason = "mesaj trimis"
-
-            if stars == 3:
-                xp_earned += XP_REWARDS["no_mistake"]
-                reason = "răspuns perfect ★★★"
-                st.session_state.streak += 1
-                if st.session_state.streak == 3:
-                    xp_earned += XP_REWARDS["streak_3"]
-                    reason += " + streak x3!"
-                    award_badge("no_mistakes")
-                if st.session_state.streak == 5:
-                    xp_earned += XP_REWARDS["streak_5"]
-                    reason += " + streak x5! 🔥"
-            else:
-                st.session_state.streak = 0
-
-            if is_audio:
-                xp_earned += XP_REWARDS["audio_bonus"]
-                reason += " + bonus audio 🎤"
-
-            award_xp(xp_earned, reason)
-            st.rerun()
-
-        except Exception as e:
-            # Revert UI messages
-            if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-                st.session_state.messages.pop()
-                
-            # Revert Gemini session history to avoid "400 Please ensure that the dialogue role alternates"
             try:
-                if st.session_state.chat_session.history and getattr(st.session_state.chat_session.history[-1], "role", "") == "user":
-                    st.session_state.chat_session.history.pop()
-            except Exception:
-                pass
-                
-            # Revert audio processing state
-            if is_audio:
-                st.session_state.last_processed_audio = None
+                with st.spinner("⚡ Procesează..."):
+                    if is_audio:
+                        blob = {"mime_type": user_message.type, "data": user_message.getvalue()}
+                        response = st.session_state.chat_session.send_message(["Analyze English quality of this audio.", blob, reminder])
+                    else:
+                        response = st.session_state.chat_session.send_message(user_message + reminder)
 
-            if "429" in str(e) or "quota" in str(e).lower():
-                st.warning("⏳ Ai atins limita de mesaje (prea multe solicitări simultane). Te rog așteaptă câteva momente și trimite mesajul din nou!")
-            else:
-                st.error(f"Eroare la procesare: {e}")
+                resp_text = response.text
+                st.session_state.messages.append({"role": "assistant", "content": resp_text})
+
+                stars = count_stars_in_response(resp_text)
+                st.session_state.total_stars += stars
+                xp_earned = XP_REWARDS["message_sent"]
+                reason = "mesaj trimis"
+
+                if stars == 3:
+                    xp_earned += XP_REWARDS["no_mistake"]
+                    reason = "răspuns perfect ★★★"
+                    play_sound("ding")       # ★★★ — sunet pozitiv
+                    st.session_state.streak += 1
+                    st.session_state.heart_streak += 1
+                    if st.session_state.heart_streak >= 3:
+                        st.session_state.heart_streak = 0
+                        if st.session_state.hearts < MAX_HEARTS:
+                            st.session_state.hearts += 1
+                            reason += " + ❤️ recuperată!"
+                    if st.session_state.streak == 3:
+                        xp_earned += XP_REWARDS["streak_3"]
+                        reason += " + streak x3!"
+                        award_badge("no_mistakes")
+                    if st.session_state.streak == 5:
+                        xp_earned += XP_REWARDS["streak_5"]
+                        reason += " + streak x5! 🔥"
+                elif stars == 1:
+                    st.session_state.streak = 0
+                    st.session_state.heart_streak = 0
+                    if st.session_state.hearts > 0:
+                        st.session_state.hearts -= 1
+                        st.session_state.heart_pulse = True
+                        play_sound("thud")   # pierdere ❤️
+                    play_sound("buzz")       # ★☆☆ — sunet negativ
+                else:
+                    st.session_state.streak = 0
+                    st.session_state.heart_streak = 0
+
+                if is_audio:
+                    xp_earned += XP_REWARDS["audio_bonus"]
+                    reason += " + bonus audio 🎤"
+
+                award_xp(xp_earned, reason)
+                # Badge nou — fanfare după award_xp (new_badge a fost setat)
+                if st.session_state.new_badge:
+                    play_sound("fanfare")
+                update_daily_streak()
+                st.rerun()
+
+            except Exception as e:
+                if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+                    st.session_state.messages.pop()
+                try:
+                    if st.session_state.chat_session.history and getattr(st.session_state.chat_session.history[-1], "role", "") == "user":
+                        st.session_state.chat_session.history.pop()
+                except Exception:
+                    pass
+                if is_audio:
+                    st.session_state.last_processed_audio = None
+                if "429" in str(e) or "quota" in str(e).lower():
+                    st.warning("⏳ Ai atins limita de mesaje (prea multe solicitări simultane). Te rog aşteaptă câteva momente şi trimite mesajul din nou!")
+                else:
+                    st.error(f"Eroare la procesare: {e}")
