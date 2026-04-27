@@ -2592,9 +2592,13 @@ with st.sidebar:
         st.rerun()
 
     # --- AUTO-TRANSLATE TOGGLE ---
-    auto_tr_label = "🇷🇴 Auto-traducere ON" if st.session_state.auto_translate else "🇷🇴 Auto-traducere OFF"
+    _auto_on = st.session_state.auto_translate
+    auto_tr_label = "🇷🇴 AUTO-TRADUCERE ON" if _auto_on else "🇷🇴 AUTO-TRADUCERE OFF"
     if st.button(auto_tr_label, use_container_width=True):
-        st.session_state.auto_translate = not st.session_state.auto_translate
+        st.session_state.auto_translate = not _auto_on
+        if _auto_on:
+            # Turning OFF → hide all translation panels immediately
+            st.session_state.show_translation = {}
         st.rerun()
 
     st.divider()
@@ -2975,31 +2979,35 @@ else:
 
                 # ── TRANSLATION TOGGLE ────────────────────────────────────────
                 if _allow_trans:
-                    # Auto-translate: pre-populate show flag for latest AI msg
-                    _last_ai_idx = max(
-                        (i for i, m in enumerate(st.session_state.messages) if m["role"] == "assistant"),
-                        default=-1
-                    )
-                    if st.session_state.auto_translate and _mi == _last_ai_idx:
+                    # Build translate text: Why lines + roleplay (skip ❌/✅ lines)
+                    def _build_trans_text():
+                        if has_feedback and split_pt > 0:
+                            _fb_lines  = fb_raw.split("\n")
+                            _why_lines = [l for l in _fb_lines if "📖" in l or "Why" in l]
+                            return ("\n".join(_why_lines) + "\n\n" + rp_raw) if _why_lines else rp_raw
+                        return content
+
+                    # AUTO-TRANSLATE: generate eagerly for ALL assistant msgs
+                    if st.session_state.auto_translate:
                         st.session_state.show_translation[_mi] = True
+                        if _mi not in st.session_state.translations:
+                            with st.spinner("🌐 Se traduce..."):
+                                get_translation(_mi, _build_trans_text())
 
                     _showing = st.session_state.show_translation.get(_mi, False)
-                    _btn_lbl = "🇬🇧 Ascunde traducerea" if _showing else "🇷🇴 Vezi traducerea"
+                    _btn_lbl = "🇬🇧 Ascunde" if _showing else "🇷🇴 Traducere"
 
-                    if st.button(_btn_lbl, key=f"tr_btn_{_mi}"):
-                        st.session_state.show_translation[_mi] = not _showing
-                        if not _showing and _mi not in st.session_state.translations:
-                            # Translate only the "Why" explanation lines from feedback
-                            # + the roleplay part; skip ❌/✅ correction lines
-                            _trans_text = content
-                            if has_feedback and split_pt > 0:
-                                # Filter only 📖 Why: lines from feedback
-                                _fb_lines = fb_raw.split("\n") if split_pt > 0 else []
-                                _why_lines = [l for l in _fb_lines if "📖" in l or "Why" in l]
-                                _trans_text = "\n".join(_why_lines) + "\n\n" + rp_raw if _why_lines else rp_raw
-                            with st.spinner("🌐 Se traduce..."):
-                                get_translation(_mi, _trans_text)
-                        st.rerun()
+                    # Manual toggle button (small, right-aligned)
+                    _, _bcol = st.columns([8, 1])
+                    with _bcol:
+                        if st.button(_btn_lbl, key=f"tr_btn_{_mi}",
+                                     help="Afișează/ascunde traducerea română"):
+                            _new_showing = not _showing
+                            st.session_state.show_translation[_mi] = _new_showing
+                            if _new_showing and _mi not in st.session_state.translations:
+                                with st.spinner("🌐 Se traduce..."):
+                                    get_translation(_mi, _build_trans_text())
+                            st.rerun()
 
                     if _showing and _mi in st.session_state.translations:
                         _ro_html = _highlight_en_phrases(st.session_state.translations[_mi])
