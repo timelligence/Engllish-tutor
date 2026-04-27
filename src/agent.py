@@ -655,7 +655,8 @@ def _highlight_en_phrases(ro_text: str) -> str:
     t = _h.escape(ro_text)
     # Highlight content inside "..." or '...'
     t = re.sub(r'&quot;(.+?)&quot;', r'<span class="en-phrase">"\1"</span>', t)
-    t = re.sub(r"&#x27;(.+?)&#x27;", r"<span class='en-phrase'>'\1'</span>", t)
+    t = re.sub(r"&#x27;(.+?)&#x27;", r"<span class='en-phrase'>'\1'</span>", t)
+
     t = t.replace("\n", "<br>")
     return t
 
@@ -2833,12 +2834,16 @@ else:
         return ""
 
     def _md_to_safe(text):
-        """Minimal markdown → HTML: bold, italic, inline-code, newlines."""
+        """Minimal markdown → HTML: bold, italic, inline-code, newlines.
+        Safe version: guards against None/non-string input.
+        """
+        if not text or not isinstance(text, str):
+            return ""
         import html as _html
-        t = _html.escape(text)
+        t = _html.escape(str(text))
         t = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', t, flags=re.DOTALL)
         t = re.sub(r'\*(.+?)\*',   r'<em>\1</em>',      t, flags=re.DOTALL)
-        t = re.sub(r'`(.+?)`',     r'<code>\1</code>', t, flags=re.DOTALL)
+        t = re.sub(r'`([^`]+)`',    r'<code>\1</code>',  t)
         t = t.replace("\n", "<br>")
         return t
 
