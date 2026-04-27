@@ -777,15 +777,15 @@ def render_quick_practice(scenario_name):
         </div>
         """, unsafe_allow_html=True)
         st.write("")
-        if st.button("💬 Înapoim la Chat", use_container_width=True):
+        if st.button("💬 Înapoi la Chat", use_container_width=True):
             st.session_state.app_mode = "chat"
             st.rerun()
         if st.button("🔄 Repetă exercițiile", use_container_width=True):
-            st.session_state.qp_index = 0
-            st.session_state.qp_answered = False
-            st.session_state.qp_chosen = None
-            st.session_state.qp_xp = 0
-            st.session_state.qp_correct = 0
+            st.session_state.qp_index   = 0
+            st.session_state.qp_answered = None
+            st.session_state.qp_chosen  = None
+            st.session_state.qp_xp      = 0
+            st.session_state.qp_correct  = 0
             st.rerun()
         return
 
@@ -800,16 +800,33 @@ def render_quick_practice(scenario_name):
     </div>
     """, unsafe_allow_html=True)
 
-    # ── EXERCISE CARD ─────────────────────────────────────────────
+    # ── EXERCISE DATA ─────────────────────────────────────────────
     ex = exercises[idx]
-    answered  = st.session_state.qp_answered
-    chosen    = st.session_state.qp_chosen
-    correct_i = ex["correct"]
+    # Support both formats:
+    #   old: {"options": [...], "correct": int_index}
+    #   new: {"correct": str, "wrong": [str, str, str]}
+    if "options" in ex:
+        options   = ex["options"]
+        correct_i = ex["correct"]                # int index
+        correct_txt = options[correct_i]
+    else:
+        import random as _rnd
+        correct_txt = ex["correct"]
+        all_opts    = [correct_txt] + list(ex.get("wrong", []))
+        rng = _rnd.Random(idx * 42)
+        rng.shuffle(all_opts)
+        options   = all_opts
+        correct_i = options.index(correct_txt)
 
-    # Construim HTML-ul opțiunilor
+    # Read state — use None = unanswered  (avoids falsy-False bug)
+    answered = st.session_state.get("qp_answered", None)
+    chosen   = st.session_state.get("qp_chosen",   None)  # int index
+
+    # ── QUESTION CARD (HTML — visual only) ───────────────────────
+    import html as _he
     opts_html = ""
-    for i, opt in enumerate(ex["options"]):
-        if not answered:
+    for i, opt in enumerate(options):
+        if answered is None:
             cls = "qp-option"
         elif i == correct_i:
             cls = "qp-option correct"
@@ -817,49 +834,52 @@ def render_quick_practice(scenario_name):
             cls = "qp-option wrong"
         else:
             cls = "qp-option"
-        opts_html += f'<div class="{cls}">{chr(65+i)}. {opt}</div>'
+        opts_html += f'<div class="{cls}">{chr(65+i)}. {_he.escape(opt)}</div>'
 
     st.markdown(f"""
     <div class="qp-card">
-        <div class="qp-question">🤔 {ex['q']}</div>
+        <div class="qp-question">🤔 {_he.escape(ex["q"])}</div>
         <div class="qp-options">{opts_html}</div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── BUTOANE DE RĂSPUNS (afişate cu Streamlit ca să fie clickable) ──
-    if not answered:
-        btn_cols = st.columns(4)
-        for i, opt in enumerate(ex["options"]):
-            with btn_cols[i]:
-                if st.button(chr(65 + i), key=f"qp_opt_{idx}_{i}", use_container_width=True):
-                    st.session_state.qp_answered = True
-                    st.session_state.qp_chosen = i
-                    if i == correct_i:
-                        award_xp(15, "Quick Practice ★")
-                        st.session_state.qp_xp += 15
-                        st.session_state.qp_correct += 1
-                        play_sound("ding")       # răspuns corect
-                    else:
-                        # Pierde 1 ❤️ la răspuns greşit
-                        play_sound("buzz")       # răspuns greşit
-                        if st.session_state.hearts > 0:
-                            st.session_state.hearts -= 1
-                            st.session_state.heart_pulse = True
-                            play_sound("thud")   # pierdere ❤️
-                    st.rerun()
+    # ── ACTIVE ANSWER BUTTONS ─────────────────────────────────────
+    if answered is None:
+        # Full-width buttons with letter + answer text — clearly clickable
+        for i, opt in enumerate(options):
+            if st.button(
+                f"{chr(65+i)}. {opt}",
+                key=f"qp_ans_{idx}_{i}",
+                use_container_width=True,
+            ):
+                st.session_state.qp_chosen   = i
+                st.session_state.qp_answered = (i == correct_i)   # True/False
+                if i == correct_i:
+                    award_xp(15, "Quick Practice ★")
+                    st.session_state.qp_xp      += 15
+                    st.session_state.qp_correct  += 1
+                    play_sound("ding")
+                else:
+                    play_sound("buzz")
+                    if st.session_state.hearts > 0:
+                        st.session_state.hearts    -= 1
+                        st.session_state.heart_pulse = True
+                        play_sound("thud")
+                st.rerun()   # ← CRUCIAL
+
+    # ── FEEDBACK + NEXT ──────────────────────────────────────────
     else:
-        # Afişează feedback + buton următor
         is_correct = (chosen == correct_i)
         if is_correct:
             fb_cls  = "ok"
             fb_text = "🎉 🎉 🎉 Excelent! Răspuns corect! +15 XP"
         else:
+            fb_text = f"❌ Greşit! Răspunsul corect era: <em>{_he.escape(options[correct_i])}</em>"
             fb_cls  = "err"
-            fb_text = f"❌ Greşit! Răspunsul corect era: <em>{ex['options'][correct_i]}</em>"
-        st.markdown(f'<div class="qp-feedback {fb_cls}">{fb_text}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="qp-feedback {fb_cls}">{fb_text}</div>',
+                    unsafe_allow_html=True)
 
         if st.session_state.hearts <= 0:
-            # Game Over în QP — afișează avertisment
             st.markdown("""
             <div class="game-over-overlay">
                 <div class="game-over-modal">
@@ -872,11 +892,13 @@ def render_quick_practice(scenario_name):
             """, unsafe_allow_html=True)
             return
 
-        if st.button("Următorul exercițiu ➜", use_container_width=True):
-            st.session_state.qp_index += 1
-            st.session_state.qp_answered = False
-            st.session_state.qp_chosen = None
+        if st.button("Următorul exercițiu ➜", use_container_width=True, key="qp_next"):
+            st.session_state.qp_index   += 1
+            st.session_state.qp_answered = None   # reset to None, not False
+            st.session_state.qp_chosen   = None
             st.rerun()
+
+
 
 
 # --- FLASHCARD RENDER FUNCTION ---
@@ -2423,8 +2445,8 @@ if "today_turns"       not in st.session_state: st.session_state.today_turns = 0
 # --- QUICK PRACTICE STATE ---
 if "app_mode"          not in st.session_state: st.session_state.app_mode = "chat"   # "chat" | "qp"
 if "qp_index"          not in st.session_state: st.session_state.qp_index = 0        # index exercițiu curent
-if "qp_answered"       not in st.session_state: st.session_state.qp_answered = False  # a răspuns la exercițiul curent?
-if "qp_chosen"         not in st.session_state: st.session_state.qp_chosen = None    # indexul opțiunii alese
+if "qp_answered"       not in st.session_state: st.session_state.qp_answered = None   # None=unanswered True/False=result
+if "qp_chosen"         not in st.session_state: st.session_state.qp_chosen  = None   # int index of chosen option
 if "qp_xp"             not in st.session_state: st.session_state.qp_xp = 0           # XP acumulat în sesiunea QP
 if "qp_correct"        not in st.session_state: st.session_state.qp_correct = 0      # număr răspunsuri corecte
 # --- XP VISUAL STATE ---
