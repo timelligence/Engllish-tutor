@@ -1978,6 +1978,66 @@ hr { border-color: var(--border) !important; }
 }
 
 
+
+/* ===== MODE TAB PILLS ===== */
+.tab-pill-container {
+    display: flex;
+    gap: 0;
+    background: #060d1a;
+    border: 1px solid #1a3a5c;
+    border-radius: 12px;
+    padding: 4px;
+    margin: 6px 0 10px;
+    width: 100%;
+    box-sizing: border-box;
+}
+.tab-pill {
+    flex: 1;
+    padding: 8px 20px;
+    font-family: 'Exo 2', sans-serif;
+    font-weight: 700;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-radius: 8px;
+    text-align: center;
+    color: #4a6a8a;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+.tab-pill:hover:not(.tab-pill-active) {
+    color: #8ab4d8;
+}
+.tab-pill-active {
+    background: linear-gradient(135deg, #0a2040, #0d3060);
+    color: var(--cyan) !important;
+    border: 1px solid #00f5ff;
+    box-shadow: 0 0 12px rgba(0,245,255,0.2);
+    cursor: default;
+    pointer-events: none;
+}
+
+/* override Streamlit button styling inside pill tabs */
+div[data-testid="column"].tab-col > div > div > div > button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    width: 100% !important;
+    font-family: 'Exo 2', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 0.82rem !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+    color: #4a6a8a !important;
+    transition: color 0.2s ease !important;
+}
+div[data-testid="column"].tab-col > div > div > div > button:hover {
+    color: #8ab4d8 !important;
+}
+
 /* ===== EMPTY STATE ===== */
 @keyframes floatAvatar {
     0%,100% { transform: translateY(0px);   }
@@ -2302,45 +2362,62 @@ if st.session_state.get("level_up_pending") and not st.session_state.get("level_
     st.stop()
 
 # --- HEADER ---
-sc_info_hdr = SCENARIOS[st.session_state.last_scenario] if st.session_state.last_scenario in SCENARIOS else SCENARIOS[list(SCENARIOS.keys())[0]]
-col_hdr, col_btn = st.columns([5, 1])
-with col_hdr:
-    st.markdown("""
-    <div class="game-header">
-        <div class="game-title">🚢 CRUISE ENGLISH TRAINER</div>
-        <div class="game-subtitle">Training pentru <strong>Anamaria</strong> — misiunea ta pe vas începe aici</div>
-    </div>
-    """, unsafe_allow_html=True)
-with col_btn:
-    st.write("")
-    st.write("")
-    mode = st.session_state.app_mode
-    # Buton 1: Chat
-    if mode == "chat":
-        st.markdown('<span style="font-size:0.72rem;color:var(--cyan);">▶ Chat Mode</span>', unsafe_allow_html=True)
-    else:
-        if st.button("💬 Chat", use_container_width=True):
-            st.session_state.app_mode = "chat"
-            st.rerun()
-    # Buton 2: Quick Practice
-    if mode == "qp":
-        st.markdown('<span style="font-size:0.72rem;color:var(--cyan);">▶ Quick Practice</span>', unsafe_allow_html=True)
-    else:
-        if st.button("⚡ Quick", use_container_width=True):
-            st.session_state.app_mode = "qp"
-            st.session_state.qp_index = 0
-            st.session_state.qp_answered = False
-            st.session_state.qp_chosen = None
-            st.session_state.qp_xp = 0
-            st.session_state.qp_correct = 0
-            st.rerun()
-    # Buton 3: Flashcards
-    if mode == "fc":
-        st.markdown('<span style="font-size:0.72rem;color:var(--cyan);">▶ Flashcards</span>', unsafe_allow_html=True)
-    else:
-        if st.button("🃏 Cards", use_container_width=True):
-            st.session_state.app_mode = "fc"
-            st.rerun()
+st.markdown("""
+<div class="game-header">
+    <div class="game-title">🚢 CRUISE ENGLISH TRAINER</div>
+    <div class="game-subtitle">Training pentru <strong>Anamaria</strong> — misiunea ta pe vas începe aici</div>
+</div>
+""", unsafe_allow_html=True)
+
+# --- MODE TAB PILLS ---
+_mode = st.session_state.app_mode
+
+def _pill_cls(m):
+    return "tab-pill tab-pill-active" if _mode == m else "tab-pill"
+
+# Render a pure-HTML display pill row (visual only — active tab no click)
+# Plus hidden Streamlit buttons for inactive tabs (wired to rerun)
+st.markdown(f"""
+<div class="tab-pill-container">
+    <div class="{_pill_cls('chat')}">💬 CHAT</div>
+    <div class="{_pill_cls('qp')}">⚡ QUICK</div>
+    <div class="{_pill_cls('fc')}">🃏 CARDS</div>
+</div>
+""", unsafe_allow_html=True)
+
+# Invisible-but-functional Streamlit buttons below the visual pills
+_tc1, _tc2, _tc3 = st.columns(3)
+with _tc1:
+    if _mode != "chat" and st.button("💬 CHAT", key="tab_chat", use_container_width=True):
+        st.session_state.app_mode = "chat"
+        st.rerun()
+with _tc2:
+    if _mode != "qp" and st.button("⚡ QUICK", key="tab_qp", use_container_width=True):
+        st.session_state.app_mode = "qp"
+        st.session_state.qp_index   = 0
+        st.session_state.qp_answered = False
+        st.session_state.qp_chosen  = None
+        st.session_state.qp_xp     = 0
+        st.session_state.qp_correct = 0
+        st.rerun()
+with _tc3:
+    if _mode != "fc" and st.button("🃏 CARDS", key="tab_fc", use_container_width=True):
+        st.session_state.app_mode = "fc"
+        st.rerun()
+
+# Hide the functional buttons with CSS (they fire on click, but are invisible)
+st.markdown("""<style>
+button[kind="secondary"][data-testid="baseButton-secondary"]:is(
+    [aria-label="💬 CHAT"], [aria-label="⚡ QUICK"], [aria-label="🃏 CARDS"]
+) { display: none !important; }
+div[data-testid="stHorizontalBlock"]:has(button[kind="secondary"]) {
+    margin-top: -70px;
+    opacity: 0;
+    pointer-events: auto;
+    height: 44px;
+    overflow: hidden;
+}
+</style>""", unsafe_allow_html=True)
 
 # --- SIDEBAR ---
 with st.sidebar:
