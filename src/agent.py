@@ -52,7 +52,7 @@ MAX_HEARTS = 5
 # ===== QUICK PRACTICE EXERCISES =====
 # Format per exercițiu: {"q": str, "options": [str x4], "correct": int (0-based index)}
 QP_EXERCISES = {
-    "🛗 Shop – Duty Free": [
+    "🛍️ Shop – Duty Free": [
         {
             "q": "Un pasager întřeabă de un parfum cadou pentru soție. Ce spui?",
             "options": [
@@ -208,7 +208,7 @@ QP_EXERCISES = {
             "correct": 1
         },
     ],
-    "🛝️ Guest Services": [
+    "🛎️ Guest Services": [
         {
             "q": "Un pasager nervos se apropie de birou. Cum îl întâmpini?",
             "options": [
