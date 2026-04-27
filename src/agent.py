@@ -319,6 +319,8 @@ SCENARIOS = {
         "icon": "🛍️",
         "char": "James",
         "char_emoji": "🧑‍💼",
+        "avatar": "🧑‍💼",
+        "role": "Senior Shop Assistant · Deck 5 Boutique",
         "difficulty": "⭐⭐",
         "prompt": """
         You are James, senior shop assistant at the Duty Free boutique on a luxury cruise ship.
@@ -356,6 +358,8 @@ SCENARIOS = {
         "icon": "🍽️",
         "char": "Marco",
         "char_emoji": "👨‍🍳",
+        "avatar": "👨‍🍳",
+        "role": "Head Waiter · Main Dining Room",
         "difficulty": "⭐⭐⭐",
         "prompt": """
         You are Marco, Head Waiter in the Main Dining Room on a 5-star cruise ship.
@@ -393,6 +397,8 @@ SCENARIOS = {
         "icon": "🍹",
         "char": "Jake",
         "char_emoji": "🧑‍🍳",
+        "avatar": "🍹",
+        "role": "Head Bartender · Lido Pool Bar",
         "difficulty": "⭐",
         "prompt": """
         You are Jake, Head Bartender at the Lido Pool Bar. Relaxed, fun, international atmosphere.
@@ -428,6 +434,8 @@ SCENARIOS = {
         "icon": "🛎️",
         "char": "Patricia",
         "char_emoji": "👩‍💼",
+        "avatar": "👩‍💼",
+        "role": "Senior Guest Services Officer · Information Desk",
         "difficulty": "⭐⭐⭐",
         "prompt": """
         You are Patricia, Senior Guest Services Officer at the Information Desk.
@@ -464,6 +472,8 @@ SCENARIOS = {
         "icon": "🎯",
         "char": "Richard",
         "char_emoji": "👔",
+        "avatar": "👔",
+        "role": "Recruitment Officer · Cruise Line HR",
         "difficulty": "⭐⭐⭐⭐",
         "prompt": """
         You are Richard, Recruitment Officer at a major cruise line (Royal Caribbean / MSC level).
@@ -1834,6 +1844,86 @@ hr { border-color: var(--border) !important; }
     letter-spacing: 0.3px;
 }
 
+/* ===== CHARACTER CARD ===== */
+@keyframes moodFadeIn {
+    from { opacity: 0; transform: translateX(-6px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes onlinePulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(0,255,136,0.7); }
+    50%      { box-shadow: 0 0 0 5px rgba(0,255,136,0); }
+}
+.char-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 20px;
+    background: linear-gradient(90deg, #050e1f 0%, #080f20 60%, #060c1c 100%);
+    border-bottom: 1px solid var(--cyan);
+    border-radius: 0;
+    max-height: 90px;
+    box-sizing: border-box;
+    margin-bottom: 12px;
+}
+.char-avatar-wrap {
+    position: relative;
+    flex-shrink: 0;
+    width: 58px;
+    height: 58px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 40% 35%, #0d2a4a, #040e1a);
+    border: 1.5px solid var(--cyan);
+    border-radius: 50%;
+    box-shadow: 0 0 18px rgba(0,245,255,0.25), inset 0 0 12px rgba(0,245,255,0.05);
+    font-size: 1.85rem;
+    line-height: 1;
+}
+.char-online-dot {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 10px;
+    height: 10px;
+    background: var(--green);
+    border-radius: 50%;
+    border: 2px solid #050e1f;
+    animation: onlinePulse 1.8s ease-in-out infinite;
+}
+.char-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.char-name {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 0.92rem !important;
+    font-weight: 700 !important;
+    color: #fff !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.char-role {
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: 0.3px;
+}
+.char-mood {
+    font-size: 0.78rem;
+    color: var(--cyan);
+    animation: moodFadeIn 0.4s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* ===== RESPONSIVE DESIGN ===== */
 @media (max-width: 768px) {
     .game-header { padding: 16px 20px 12px; margin-bottom: 12px; }
@@ -1898,6 +1988,8 @@ if "fc_queue"          not in st.session_state: st.session_state.fc_queue = []  
 if "fc_current"        not in st.session_state: st.session_state.fc_current = 0      # index în fc_queue
 if "fc_flipped"        not in st.session_state: st.session_state.fc_flipped = False  # card răsturnat?
 if "fc_scenario"       not in st.session_state: st.session_state.fc_scenario = None  # scenariu activ în FC
+# --- CHARACTER MOOD STATE ---
+if "char_mood"         not in st.session_state: st.session_state.char_mood = "😊 Ready to train you!"
 
 # --- XP FLOAT POPUP (inject after each turn) ---
 if st.session_state.get("xp_last_gain", 0) > 0:
@@ -2021,6 +2113,7 @@ with st.sidebar:
             st.session_state.level_up_shown = False
             st.session_state.level_up_pending = None
             st.session_state.xp_last_gain = 0
+            st.session_state.char_mood = "😊 Ready to train you!"
             st.rerun()
     with col2:
         if st.button("📊 RAPORT", use_container_width=True):
@@ -2203,6 +2296,7 @@ if st.session_state.last_scenario != selected_scenario_name:
     st.session_state.scenarios_tried.add(selected_scenario_name)
     if len(st.session_state.scenarios_tried) >= len(SCENARIOS):
         award_badge("all_scenarios")
+    st.session_state.char_mood = "😊 Ready to train you!"
     # Resetare QP la schimbarea scenariului
     st.session_state.qp_index = 0
     st.session_state.qp_answered = False
@@ -2275,6 +2369,25 @@ else:
 <div class="scenario-active">
     {sc_info['icon']} {selected_scenario_name}
     &nbsp;·&nbsp; Difficulty: {sc_info['difficulty']}
+</div>
+""", unsafe_allow_html=True)
+
+    # --- CHARACTER CARD ---
+    _avatar = sc_info.get("avatar", sc_info.get("char_emoji", "🧑"))
+    _char   = sc_info.get("char", "Character")
+    _role   = sc_info.get("role", "")
+    _mood   = st.session_state.char_mood
+    st.markdown(f"""
+<div class="char-card">
+    <div class="char-avatar-wrap">
+        {_avatar}
+        <div class="char-online-dot"></div>
+    </div>
+    <div class="char-info">
+        <div class="char-name">{_char}</div>
+        <div class="char-role">{_role}</div>
+        <div class="char-mood">{_mood}</div>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -2381,6 +2494,7 @@ else:
                     xp_earned += XP_REWARDS["no_mistake"]
                     reason = "răspuns perfect ★★★"
                     play_sound("ding")       # ★★★ — sunet pozitiv
+                    st.session_state.char_mood = "🤩 Excellent work!"
                     st.session_state.streak += 1
                     st.session_state.heart_streak += 1
                     if st.session_state.heart_streak >= 3:
@@ -2395,7 +2509,12 @@ else:
                     if st.session_state.streak == 5:
                         xp_earned += XP_REWARDS["streak_5"]
                         reason += " + streak x5! 🔥"
+                elif stars == 2:
+                    st.session_state.char_mood = "🙂 Getting there..."
+                    st.session_state.streak = 0
+                    st.session_state.heart_streak = 0
                 elif stars == 1:
+                    st.session_state.char_mood = "😬 Let's try that again..."
                     st.session_state.streak = 0
                     st.session_state.heart_streak = 0
                     if st.session_state.hearts > 0:
