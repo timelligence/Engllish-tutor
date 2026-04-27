@@ -2450,14 +2450,12 @@ if st.session_state.get("xp_last_gain", 0) > 0:
 if st.session_state.get("level_up_pending"):
     lvl = st.session_state.level_up_pending
     st.markdown(f"""
-    <div style="position:fixed;top:0;left:0;width:100%;height:100%;
-                background:rgba(0,0,0,0.92);z-index:9999;
-                display:flex;align-items:center;justify-content:center">
+    <div style="display:flex;align-items:center;justify-content:center;padding:40px 0;">
         <div style="background:linear-gradient(135deg,#0a1428,#0d1e35);
                     border:2px solid #ffd700;border-radius:20px;
                     padding:40px 48px;text-align:center;
                     box-shadow:0 0 60px rgba(255,215,0,0.3);
-                    max-width:420px">
+                    max-width:420px;width:100%;">
             <div style="font-size:0.8rem;color:#ffd700;letter-spacing:3px;
                         margin-bottom:8px">⚡ LEVEL UP!</div>
             <div style="font-family:Orbitron,monospace;font-size:2rem;
@@ -2531,7 +2529,7 @@ st.markdown("""<style>
 button[kind="secondary"][data-testid="baseButton-secondary"]:is(
     [aria-label="💬 CHAT"], [aria-label="⚡ QUICK"], [aria-label="🃏 CARDS"]
 ) { display: none !important; }
-div[data-testid="stHorizontalBlock"]:has(button[kind="secondary"]) {
+div[data-testid="stHorizontalBlock"]:has(button[aria-label="💬 CHAT"]) {
     margin-top: -70px;
     opacity: 0;
     pointer-events: auto;
