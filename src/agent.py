@@ -2507,6 +2507,7 @@ st.markdown(f"""
 # Invisible-but-functional Streamlit buttons below the visual pills
 _tc1, _tc2, _tc3 = st.columns(3)
 with _tc1:
+    st.markdown('<span id="tabs-anchor"></span>', unsafe_allow_html=True)
     if _mode != "chat" and st.button("💬 CHAT", key="tab_chat", use_container_width=True):
         st.session_state.app_mode = "chat"
         st.rerun()
@@ -2526,15 +2527,14 @@ with _tc3:
 
 # Hide the functional buttons with CSS (they fire on click, but are invisible)
 st.markdown("""<style>
-button[kind="secondary"][data-testid="baseButton-secondary"]:is(
-    [aria-label="💬 CHAT"], [aria-label="⚡ QUICK"], [aria-label="🃏 CARDS"]
-) { display: none !important; }
-div[data-testid="stHorizontalBlock"]:has(button[aria-label="💬 CHAT"]) {
+div[data-testid="stHorizontalBlock"]:has(#tabs-anchor) {
     margin-top: -70px;
     opacity: 0;
     pointer-events: auto;
     height: 44px;
     overflow: hidden;
+    position: relative;
+    z-index: 100;
 }
 </style>""", unsafe_allow_html=True)
 
