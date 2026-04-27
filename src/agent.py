@@ -903,196 +903,146 @@ def render_quick_practice(scenario_name):
 
 # --- FLASHCARD RENDER FUNCTION ---
 def render_flashcards(scenario_name):
-    """Afişează modul Flashcards (flip 3D) pentru scenariul activ."""
-    sc_data = SCENARIOS.get(scenario_name, {})
-    cards = sc_data.get("vocab_cards", [])
+    """Afișează modul Flashcards pentru scenariul activ.
+    REGULĂ: st.button() NICIODATĂ în st.components.v1.html() — funcționează
+    DOAR dacă e randat direct în Streamlit (în afara iframe-urilor).
+    """
+    cards = SCENARIOS.get(scenario_name, {}).get("vocab_cards", [])
     if not cards:
         st.warning("Nu există flashcard-uri pentru acest scenariu.")
         return
 
     total = len(cards)
 
-    # Dacă s-a schimbat scenariul, resetăm starea FC
+    # RESET la schimbare scenariu
     if st.session_state.fc_scenario != scenario_name:
-        st.session_state.fc_scenario  = scenario_name
-        st.session_state.fc_known     = set()
-        st.session_state.fc_queue     = list(range(total))
-        st.session_state.fc_current   = 0
-        st.session_state.fc_flipped   = False
+        st.session_state.fc_scenario = scenario_name
+        st.session_state.fc_known    = []
+        st.session_state.fc_queue    = list(range(total))
+        st.session_state.fc_current  = 0
+        st.session_state.fc_flipped  = False
 
-    known   = st.session_state.fc_known
     queue   = st.session_state.fc_queue
-    known_n = len(known)
+    known_n = len(st.session_state.fc_known)
 
-    # ── ECRAN FINAL ───────────────────────────────────────────
-    if len(queue) == 0 or known_n >= total:
+    # VICTORY SCREEN
+    if not queue:
         award_badge("vocab_master")
         play_sound("fanfare")
         st.markdown(f"""
         <div class="fc-done-card">
-            <div style="font-size:3rem;margin-bottom:10px">🏆</div>
-            <div style="font-family:'Orbitron',monospace;font-size:1.3rem;font-weight:900;color:var(--green);letter-spacing:2px;margin-bottom:8px">VOCAB MASTER!</div>
+            <div style="font-size:3rem;margin-bottom:10px">\U0001f3c6</div>
+            <div style="font-family:'Orbitron',monospace;font-size:1.3rem;
+                        font-weight:900;color:var(--green);letter-spacing:2px;
+                        margin-bottom:8px">VOCAB MASTER!</div>
             <div style="font-size:0.95rem;color:var(--text);margin-bottom:20px">
-                Ai stăpânit <strong>{total}/{total}</strong> fraze din <em>{scenario_name}</em>
+                Ai stapanit <strong>{total}/{total}</strong> fraze din <em>{scenario_name}</em>
             </div>
-            <div style="font-size:2rem">🏆⭐🏆</div>
         </div>
         """, unsafe_allow_html=True)
         st.write("")
-        if st.button("🔄 Reia de la capăt", use_container_width=True):
-            st.session_state.fc_known   = set()
-            st.session_state.fc_queue   = list(range(total))
-            st.session_state.fc_current = 0
-            st.session_state.fc_flipped = False
+        if st.button("\U0001f504 Reia de la capat", use_container_width=True, key="fc_restart"):
+            st.session_state.fc_known    = []
+            st.session_state.fc_queue    = list(range(total))
+            st.session_state.fc_current  = 0
+            st.session_state.fc_flipped  = False
             st.rerun()
-        if st.button("💬 Înapoim la Chat", use_container_width=True):
+        if st.button("\U0001f4ac Inapoi la Chat", use_container_width=True, key="fc_back"):
             st.session_state.app_mode = "chat"
             st.rerun()
         return
 
-    # ── PROGRESS BAR ───────────────────────────────────────────
-    pct = int(known_n / total * 100)
+    # PROGRESS BAR
+    pct = int(known_n / total * 100) if total > 0 else 0
     st.markdown(f"""
     <div class="fc-wrapper">
         <div class="fc-progress-row">
             <div class="fc-progress-bar-wrap">
                 <div class="fc-progress-bar-fill" style="width:{pct}%"></div>
             </div>
-            <div class="fc-progress-label">📚 {known_n}/{total} fraze stăpânite</div>
+            <div class="fc-progress-label">\U0001f4da {known_n}/{total} fraze stapanite</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── CARD CURENT ───────────────────────────────────────────
+    # CARD CURENT
+    import html as _he
     cur_pos  = min(st.session_state.fc_current, len(queue) - 1)
     card_idx = queue[cur_pos]
     card     = cards[card_idx]
     flipped  = st.session_state.fc_flipped
 
-    flipped_cls = "fc-card flipped" if flipped else "fc-card"
+    ctx      = _he.escape(str(card.get("context",  "")))
+    phrase   = _he.escape(str(card.get("phrase",   "")))
+    phonetic = _he.escape(str(card.get("phonetic", "")))
+    example  = _he.escape(str(card.get("example",  "")))
 
-    # Fața CĂRD (front)
-    front_html = f"""
-    <div class="fc-face fc-front">
-        <div class="fc-label">🇷🇴 Contextul</div>
-        <div class="fc-context">{card['context']}</div>
-        <div class="fc-phrase">{card['phrase']}</div>
-        <div class="fc-tap-hint">Apasă „Răstoarnă” pentru a vedea răspunsul</div>
-    </div>
-    """
-
-    # Spatele CĂRD (back)
-    back_html = f"""
-    <div class="fc-face fc-back">
-        <div class="fc-label">🇬🇧 Fraza în Engleză</div>
-        <div class="fc-phrase">{card['phrase']}</div>
-        <div class="fc-phonetic">{card['phonetic']}</div>
-        <div class="fc-example">{card['example']}</div>
-        <div class="fc-tap-hint">Ai ştiut-o?</div>
-    </div>
-    """
-
-    # Build the card as a self-contained HTML document to avoid Streamlit
-    # Markdown parser mangling nested tags. Buttons stay outside as st.button().
-    import html as _html_mod
-    _ctx     = _html_mod.escape(card.get("context",  ""))
-    _phrase  = _html_mod.escape(card.get("phrase",   ""))
-    _phonetic= _html_mod.escape(card.get("phonetic", ""))
-    _example = _html_mod.escape(card.get("example",  ""))
-
-    _card_html = f"""<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8">
-<style>
-*{{box-sizing:border-box;margin:0;padding:0;font-family:'Exo 2',sans-serif;}}
-body{{background:transparent;}}
-.fc-scene{{perspective:1000px;width:100%;height:260px;}}
-.fc-card{{width:100%;height:100%;position:relative;transform-style:preserve-3d;
-  transition:transform 0.55s cubic-bezier(0.4,0,0.2,1);}}
-.fc-card.flipped{{transform:rotateY(180deg);}}
-.fc-face{{position:absolute;width:100%;height:100%;backface-visibility:hidden;
-  -webkit-backface-visibility:hidden;border-radius:18px;display:flex;
-  flex-direction:column;align-items:center;justify-content:center;
-  padding:28px 32px;box-sizing:border-box;}}
-.fc-front{{background:linear-gradient(135deg,#080f20,#0d1a30);border:1px solid #1a3a5c;}}
-.fc-front::before{{content:'';position:absolute;top:0;left:0;right:0;height:2px;
-  border-radius:18px 18px 0 0;background:linear-gradient(90deg,#00f5ff,#a855f7);}}
-.fc-back{{background:linear-gradient(135deg,#040e1a,#081422);border:1px solid #00f5ff;
-  transform:rotateY(180deg);box-shadow:0 0 30px rgba(0,245,255,0.08);}}
-.fc-back::before{{content:'';position:absolute;top:0;left:0;right:0;height:2px;
-  border-radius:18px 18px 0 0;background:linear-gradient(90deg,#00ff88,#00f5ff);}}
-.fc-label{{font-size:0.65rem;text-transform:uppercase;letter-spacing:1.5px;
-  color:#4a6a8a;margin-bottom:12px;}}
-.fc-context{{font-size:0.85rem;color:#00f5ff;margin-bottom:14px;font-style:italic;
-  text-align:center;}}
-.fc-phrase{{font-size:1.25rem;font-weight:700;color:#fff;text-align:center;
-  line-height:1.4;}}
-.fc-phonetic{{font-size:0.9rem;color:#ffd700;margin:10px 0 14px;font-family:serif;
-  letter-spacing:0.5px;text-align:center;}}
-.fc-example{{font-size:0.82rem;color:#c8c8e8;text-align:center;font-style:italic;
-  line-height:1.5;border-left:2px solid #00f5ff;padding-left:12px;margin-top:8px;}}
-.fc-tap-hint{{position:absolute;bottom:18px;font-size:0.65rem;color:#2a4a6a;
-  letter-spacing:0.5px;}}
-</style>
-</head>
-<body>
-<div class="fc-scene">
-  <div class="fc-card {flipped_cls.replace('fc-card ','').replace('fc-card','')}">
-    <div class="fc-face fc-front">
-      <div class="fc-label">&#127479;&#127476; Contextul</div>
-      <div class="fc-context">{_ctx}</div>
-      <div class="fc-phrase">{_phrase}</div>
-      <div class="fc-tap-hint">Apas&#259; &#8222;R&#259;stoarn&#259;&#8221; pentru a vedea r&#259;spunsul</div>
-    </div>
-    <div class="fc-face fc-back">
-      <div class="fc-label">&#127468;&#127463; Fraza &#238;n Englez&#259;</div>
-      <div class="fc-phrase">{_phrase}</div>
-      <div class="fc-phonetic">{_phonetic}</div>
-      <div class="fc-example">{_example}</div>
-      <div class="fc-tap-hint">Ai &#351;tiut-o?</div>
-    </div>
-  </div>
-</div>
-</body></html>"""
-
-    # Compute whether card is flipped for the iframe class
-    _iframe_flipped = "flipped" if flipped else ""
-    _card_html = _card_html.replace(
-        f'class="fc-card {flipped_cls.replace("fc-card ","").replace("fc-card","")}"',
-        f'class="fc-card{" flipped" if flipped else ""}"'
-    )
-
-    _st_components.html(_card_html, height=280, scrolling=False)
-
-    # ── BUTOANE ───────────────────────────────────────────
+    # FATA CARD — st.markdown (nu components.html)
     if not flipped:
-        if st.button("🔄 Răstoarnă cardul", use_container_width=True):
+        st.markdown(f"""
+<div style="background:linear-gradient(135deg,#080f20,#0d1a30);
+            border:2px solid #1a3a5c;border-radius:20px;
+            padding:48px 32px;text-align:center;min-height:280px;
+            display:flex;flex-direction:column;justify-content:center;
+            box-sizing:border-box;margin-bottom:12px;">
+    <div style="color:#4a6a8a;font-size:0.68rem;text-transform:uppercase;
+                letter-spacing:2px;margin-bottom:14px">\U0001f1f7\U0001f1f4 Contextul</div>
+    <div style="color:#00f5ff;font-size:1rem;font-style:italic;
+                margin-bottom:20px;line-height:1.5">{ctx}</div>
+    <div style="color:#2a4a6a;font-size:0.78rem">
+        Apasa &bdquo;Rastoarna&rdquo; pentru a vedea raspunsul</div>
+</div>
+        """, unsafe_allow_html=True)
+
+        if st.button("\U0001f504 RASTOARNA CARDUL", use_container_width=True, key="fc_flip"):
             st.session_state.fc_flipped = True
             st.rerun()
+
+    # SPATELE CARD
     else:
-        b_col1, b_col2 = st.columns(2)
-        with b_col1:
-            if st.button("🤔 Nu ştiam", use_container_width=True):
-                # Pune cardul la coada din nou
+        st.markdown(f"""
+<div style="background:linear-gradient(135deg,#040e1a,#081422);
+            border:2px solid #00f5ff;border-radius:20px;
+            padding:32px;text-align:center;min-height:280px;
+            display:flex;flex-direction:column;justify-content:center;
+            box-sizing:border-box;margin-bottom:12px;
+            box-shadow:0 0 30px rgba(0,245,255,0.08);">
+    <div style="color:#4a6a8a;font-size:0.68rem;text-transform:uppercase;
+                letter-spacing:2px;margin-bottom:12px">\U0001f1ec\U0001f1e7 Fraza in Engleza</div>
+    <div style="color:#fff;font-size:1.3rem;font-weight:700;
+                line-height:1.4;margin-bottom:8px">{phrase}</div>
+    <div style="color:#ffd700;font-size:0.9rem;font-family:serif;
+                letter-spacing:0.5px;margin-bottom:16px">{phonetic}</div>
+    <div style="border-left:2px solid #00f5ff;padding-left:12px;
+                text-align:left;color:#8ab4d8;font-size:0.82rem;
+                font-style:italic;line-height:1.5">&quot;{example}&quot;</div>
+    <div style="color:#2a4a6a;font-size:0.72rem;margin-top:20px">Ai stiut-o?</div>
+</div>
+        """, unsafe_allow_html=True)
+
+        # BUTOANE — OBLIGATORIU în afara HTML
+        b1, b2 = st.columns(2)
+        with b1:
+            if st.button("\U0001f914 Nu stiam", use_container_width=True, key="fc_no"):
                 play_sound("buzz")
-                queue.append(queue.pop(cur_pos))          # muta la coadă
+                queue.append(queue.pop(cur_pos))
                 st.session_state.fc_queue   = queue
                 st.session_state.fc_current = cur_pos % len(queue)
                 st.session_state.fc_flipped = False
                 st.rerun()
-        with b_col2:
-            if st.button("✅ Știam!", use_container_width=True):
+        with b2:
+            if st.button("\u2705 Stiam!", use_container_width=True, key="fc_yes"):
                 play_sound("ding")
-                known.add(card_idx)
+                st.session_state.fc_known.append(card_idx)
                 queue.pop(cur_pos)
-                st.session_state.fc_known   = known
                 st.session_state.fc_queue   = queue
                 st.session_state.fc_current = cur_pos % max(len(queue), 1)
                 st.session_state.fc_flipped = False
-                # XP bonus per frază învățată
-                award_xp(10, f"flashcard ★ {card['phrase'][:20]}")
+                award_xp(10, "flashcard stăpânit")
                 st.rerun()
 
+
+
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Cruise Trainer 🚢", page_icon="🚢", layout="wide")
 
