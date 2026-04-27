@@ -510,10 +510,10 @@ SCENARIOS = {
 
 # --- STARTER PHRASES (empty state chips) ---
 STARTER_PHRASES_MAP = {
-    "🛗️ Shop – Duty Free":      ["I can help you with that!", "Let me show you our latest arrivals.", "This is one of our bestsellers."],
+    "🛍️ Shop – Duty Free":      ["I can help you with that!", "Let me show you our latest arrivals.", "This is one of our bestsellers."],
     "🍽️ Waiter – Dining Room":  ["Good evening!", "May I take your order?", "I’ll be right with you."],
     "🍹 Bartender – Pool Bar":         ["What can I get for you?", "Coming right up!", "Would you like to start a tab?"],
-    "🛝️ Guest Services":              ["How may I assist you?", "I completely understand your concern.", "Allow me to look into that."],
+    "🛎️ Guest Services":              ["How may I assist you?", "I completely understand your concern.", "Allow me to look into that."],
     "🎯 HR Interview":                      ["I believe my strengths are…", "In my previous experience…", "I’m eager to grow with the company."],
 }
 
@@ -2845,6 +2845,30 @@ else:
         """, unsafe_allow_html=True)
         st.stop()  # Blochează tot ce urmează
 
+    def _md_to_safe(text):
+        """Convertește Markdown basic în HTML safe pentru st.markdown.
+        Guards against None/non-string input.
+        """
+        if not text or not isinstance(text, str):
+            return ""
+        import html as _html
+        t = _html.escape(str(text))
+        # Bold: **text**
+        t = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', t)
+        # Italic: *text*  (after bold, so ** already consumed)
+        t = re.sub(r'\*([^*]+)\*', r'<em>\1</em>', t)
+        # Quoted phrases "text" → highlight
+        t = re.sub(r'&quot;([^&]+)&quot;', r'<strong>&quot;\1&quot;</strong>', t)
+        # Inline code
+        t = re.sub(r'`([^`]+)`', r'<code>\1</code>', t)
+        # Star ratings — coloured spans
+        t = t.replace('★★★', '<span style="color:#ffd700;font-weight:700">★★★</span>')
+        t = t.replace('★★☆', '<span style="color:#c0c0c0;font-weight:700">★★☆</span>')
+        t = t.replace('★☆☆', '<span style="color:#cd7f32;font-weight:700">★☆☆</span>')
+        # Newlines
+        t = t.replace('\n', '<br>')
+        return t
+
     # --- SCENARIO BADGE ---
     sc_info = SCENARIOS[selected_scenario_name]
     st.markdown(f"""
@@ -2879,10 +2903,10 @@ else:
 
     # Map scenariu → marker de split roleplay
     _char_marker_map = {
-        "🛗️ Shop – Duty Free":      "**🛗️ James:**",
+        "🛍️ Shop – Duty Free":      "**🛗️ James:**",
         "🍽️ Waiter – Dining Room":  "**🍽️ Marco:**",
         "🍹 Bartender – Pool Bar":         "**🍹 Jake:**",
-        "🛝️ Guest Services":              "**🛝️ Patricia:**",
+        "🛎️ Guest Services":              "**🛝️ Patricia:**",
         "🎯 HR Interview":                      "**👔 Richard:**",
     }
     _rp_marker = _char_marker_map.get(selected_scenario_name, "")
@@ -2896,19 +2920,6 @@ else:
             return '<span class="stars-pill s1">★☆☆ Keep going!</span>'
         return ""
 
-    def _md_to_safe(text):
-        """Minimal markdown → HTML: bold, italic, inline-code, newlines.
-        Safe version: guards against None/non-string input.
-        """
-        if not text or not isinstance(text, str):
-            return ""
-        import html as _html
-        t = _html.escape(str(text))
-        t = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', t, flags=re.DOTALL)
-        t = re.sub(r'\*(.+?)\*',   r'<em>\1</em>',      t, flags=re.DOTALL)
-        t = re.sub(r'`([^`]+)`',    r'<code>\1</code>',  t)
-        t = t.replace("\n", "<br>")
-        return t
 
     # Starter chips — populated via query param trick
     _starters = STARTER_PHRASES_MAP.get(selected_scenario_name, [])
@@ -3078,10 +3089,10 @@ else:
             if turns_now >= 10 and "10_turns" not in st.session_state.badges: award_badge("10_turns")
 
             char_map2 = {
-                "🛗️ Shop – Duty Free":     "**🛗️ James:**",
+                "🛍️ Shop – Duty Free":     "**🛗️ James:**",
                 "🍽️ Waiter – Dining Room": "**🍽️ Marco:**",
                 "🍹 Bartender – Pool Bar":        "**🍹 Jake:**",
-                "🛝️ Guest Services":              "**🛝️ Patricia:**",
+                "🛎️ Guest Services":              "**🛝️ Patricia:**",
                 "🎯 HR Interview":                      "**👔 Richard:**",
             }
             char_tag = char_map2.get(selected_scenario_name, "**[Character]:**")
