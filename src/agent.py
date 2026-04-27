@@ -970,14 +970,77 @@ def render_flashcards(scenario_name):
     </div>
     """
 
-    st.markdown(f"""
-    <div class="fc-scene">
-        <div class="{flipped_cls}">
-            {front_html}
-            {back_html}
-        </div>
+    # Build the card as a self-contained HTML document to avoid Streamlit
+    # Markdown parser mangling nested tags. Buttons stay outside as st.button().
+    import html as _html_mod
+    _ctx     = _html_mod.escape(card.get("context",  ""))
+    _phrase  = _html_mod.escape(card.get("phrase",   ""))
+    _phonetic= _html_mod.escape(card.get("phonetic", ""))
+    _example = _html_mod.escape(card.get("example",  ""))
+
+    _card_html = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0;font-family:'Exo 2',sans-serif;}}
+body{{background:transparent;}}
+.fc-scene{{perspective:1000px;width:100%;height:260px;}}
+.fc-card{{width:100%;height:100%;position:relative;transform-style:preserve-3d;
+  transition:transform 0.55s cubic-bezier(0.4,0,0.2,1);}}
+.fc-card.flipped{{transform:rotateY(180deg);}}
+.fc-face{{position:absolute;width:100%;height:100%;backface-visibility:hidden;
+  -webkit-backface-visibility:hidden;border-radius:18px;display:flex;
+  flex-direction:column;align-items:center;justify-content:center;
+  padding:28px 32px;box-sizing:border-box;}}
+.fc-front{{background:linear-gradient(135deg,#080f20,#0d1a30);border:1px solid #1a3a5c;}}
+.fc-front::before{{content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  border-radius:18px 18px 0 0;background:linear-gradient(90deg,#00f5ff,#a855f7);}}
+.fc-back{{background:linear-gradient(135deg,#040e1a,#081422);border:1px solid #00f5ff;
+  transform:rotateY(180deg);box-shadow:0 0 30px rgba(0,245,255,0.08);}}
+.fc-back::before{{content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  border-radius:18px 18px 0 0;background:linear-gradient(90deg,#00ff88,#00f5ff);}}
+.fc-label{{font-size:0.65rem;text-transform:uppercase;letter-spacing:1.5px;
+  color:#4a6a8a;margin-bottom:12px;}}
+.fc-context{{font-size:0.85rem;color:#00f5ff;margin-bottom:14px;font-style:italic;
+  text-align:center;}}
+.fc-phrase{{font-size:1.25rem;font-weight:700;color:#fff;text-align:center;
+  line-height:1.4;}}
+.fc-phonetic{{font-size:0.9rem;color:#ffd700;margin:10px 0 14px;font-family:serif;
+  letter-spacing:0.5px;text-align:center;}}
+.fc-example{{font-size:0.82rem;color:#c8c8e8;text-align:center;font-style:italic;
+  line-height:1.5;border-left:2px solid #00f5ff;padding-left:12px;margin-top:8px;}}
+.fc-tap-hint{{position:absolute;bottom:18px;font-size:0.65rem;color:#2a4a6a;
+  letter-spacing:0.5px;}}
+</style>
+</head>
+<body>
+<div class="fc-scene">
+  <div class="fc-card {flipped_cls.replace('fc-card ','').replace('fc-card','')}">
+    <div class="fc-face fc-front">
+      <div class="fc-label">&#127479;&#127476; Contextul</div>
+      <div class="fc-context">{_ctx}</div>
+      <div class="fc-phrase">{_phrase}</div>
+      <div class="fc-tap-hint">Apas&#259; &#8222;R&#259;stoarn&#259;&#8221; pentru a vedea r&#259;spunsul</div>
     </div>
-    """, unsafe_allow_html=True)
+    <div class="fc-face fc-back">
+      <div class="fc-label">&#127468;&#127463; Fraza &#238;n Englez&#259;</div>
+      <div class="fc-phrase">{_phrase}</div>
+      <div class="fc-phonetic">{_phonetic}</div>
+      <div class="fc-example">{_example}</div>
+      <div class="fc-tap-hint">Ai &#351;tiut-o?</div>
+    </div>
+  </div>
+</div>
+</body></html>"""
+
+    # Compute whether card is flipped for the iframe class
+    _iframe_flipped = "flipped" if flipped else ""
+    _card_html = _card_html.replace(
+        f'class="fc-card {flipped_cls.replace("fc-card ","").replace("fc-card","")}"',
+        f'class="fc-card{" flipped" if flipped else ""}"'
+    )
+
+    _st_components.html(_card_html, height=280, scrolling=False)
 
     # ── BUTOANE ───────────────────────────────────────────
     if not flipped:
