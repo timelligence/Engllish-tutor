@@ -508,6 +508,15 @@ SCENARIOS = {
     },
 }
 
+# --- STARTER PHRASES (empty state chips) ---
+STARTER_PHRASES_MAP = {
+    "🛗️ Shop – Duty Free":      ["I can help you with that!", "Let me show you our latest arrivals.", "This is one of our bestsellers."],
+    "🍽️ Waiter – Dining Room":  ["Good evening!", "May I take your order?", "I’ll be right with you."],
+    "🍹 Bartender – Pool Bar":         ["What can I get for you?", "Coming right up!", "Would you like to start a tab?"],
+    "🛝️ Guest Services":              ["How may I assist you?", "I completely understand your concern.", "Allow me to look into that."],
+    "🎯 HR Interview":                      ["I believe my strengths are…", "In my previous experience…", "I’m eager to grow with the company."],
+}
+
 # --- FUNCȚII GAME ---
 def get_level(xp):
     current = LEVELS[0]
@@ -1968,6 +1977,124 @@ hr { border-color: var(--border) !important; }
     letter-spacing: 0.3px;
 }
 
+
+/* ===== EMPTY STATE ===== */
+@keyframes floatAvatar {
+    0%,100% { transform: translateY(0px);   }
+    50%      { transform: translateY(-10px); }
+}
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px 36px;
+    text-align: center;
+    animation: fadeInUp 0.5s ease;
+    gap: 10px;
+}
+.es-avatar-wrap {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 40% 35%, #0e2d50, #040e1a);
+    border: 2px solid var(--cyan);
+    box-shadow: 0 0 24px rgba(0,245,255,0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.4rem;
+    animation: floatAvatar 3s ease-in-out infinite;
+    margin-bottom: 6px;
+}
+.es-char-name {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 1rem !important;
+    font-weight: 700 !important;
+    color: var(--cyan) !important;
+}
+.es-message {
+    font-size: 0.92rem;
+    color: var(--text);
+    margin: 2px 0 6px;
+    font-family: 'Exo 2', sans-serif;
+}
+.es-hint {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    letter-spacing: 0.3px;
+    margin-bottom: 14px;
+    font-family: 'Exo 2', sans-serif;
+}
+.es-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    max-width: 480px;
+}
+.es-chip {
+    background: rgba(0,245,255,0.05);
+    border: 1px solid var(--cyan);
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 0.8rem;
+    color: var(--cyan);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: 'Exo 2', sans-serif;
+}
+.es-chip:hover {
+    background: rgba(0,245,255,0.12);
+    box-shadow: 0 0 12px rgba(0,245,255,0.2);
+    transform: translateY(-1px);
+}
+
+/* ===== INPUT AREA WRAPPER ===== */
+.input-area-wrapper {
+    position: relative;
+    margin-top: 12px;
+    padding: 10px 14px 6px;
+    background: rgba(6,13,26,0.85);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-top: 1px solid #1a3a5c;
+}
+.input-area-wrapper::before {
+    content: '';
+    position: absolute;
+    top: -1px; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #1a3a5c 20%, var(--cyan) 50%, #1a3a5c 80%, transparent);
+}
+.input-area-label {
+    font-size: 0.68rem;
+    color: var(--cyan);
+    opacity: 0.65;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+@keyframes recDot {
+    0%,100% { opacity: 1; }
+    50%      { opacity: 0.15; }
+}
+.rec-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ff4757;
+    animation: recDot 1s ease-in-out infinite;
+    display: inline-block;
+    box-shadow: 0 0 6px rgba(255,71,87,0.8);
+}
+
 /* ===== CHARACTER CARD ===== */
 @keyframes moodFadeIn {
     from { opacity: 0; transform: translateX(-6px); }
@@ -2548,8 +2675,32 @@ else:
         t = t.replace("\n", "<br>")
         return t
 
+    # Starter chips — populated via query param trick
+    _starters = STARTER_PHRASES_MAP.get(selected_scenario_name, [])
+    _qs = st.query_params
+    _prefill = _qs.get("prefill", "")
+    if _prefill:
+        st.query_params.clear()
+        # Inject as pending text — rerun will pick it up via text_val
+        st.session_state._pending_prefill = _prefill
+
     chat_container = st.container()
     with chat_container:
+        # ── EMPTY STATE ─────────────────────────────────────────────────────
+        if not st.session_state.messages:
+            _chips_html = "".join(
+                f'<div class="es-chip" onclick="window.location.href='+ '?' + 'prefill=' + encodeURIComponent('{p}') + '">{p}</div>'
+                for p in _starters
+            )
+            st.markdown(f"""
+<div class="empty-state">
+  <div class="es-avatar-wrap">{_sc_avatar}</div>
+  <div class="es-char-name">{_sc_char}</div>
+  <div class="es-message">Sunt gata să te antrenez, Anamaria.</div>
+  <div class="es-hint">&rarr; Scrie primul mesaj sau apasă 🎤 pentru a vorbi</div>
+  <div class="es-chips">{_chips_html}</div>
+</div>""", unsafe_allow_html=True)
+
         st.markdown('<div class="chat-area">', unsafe_allow_html=True)
         is_first_ai = True  # primul mesaj AI = opening line
 
@@ -2606,8 +2757,17 @@ else:
     # --- INPUT (blocat când hearts == 0) ---
     footer = st.container()
     with footer:
+        st.markdown('''<div class="input-area-wrapper">
+  <div class="input-area-label">
+    <span class="rec-dot" id="rec-indicator" style="display:none"></span>
+    🎙️ Răspunde în Engleză
+  </div>
+</div>''', unsafe_allow_html=True)
         audio_val = st.audio_input("🎤 Vorbeşte")
         text_val = st.chat_input("Scrie în Engleză...")
+        # Handle chip prefill
+        if st.session_state.get("_pending_prefill") and not text_val:
+            text_val = st.session_state.pop("_pending_prefill")
 
         user_message = None
         is_audio = False
