@@ -632,6 +632,34 @@ def update_daily_streak():
 # --- AUDIO FEEDBACK (Web Audio API via st.components) ---
 import streamlit.components.v1 as _st_components
 
+def get_translation(msg_idx: int, text: str) -> str:
+    """Calls Gemini to translate AI message to Romanian. Caches result."""
+    if msg_idx in st.session_state.translations:
+        return st.session_state.translations[msg_idx]
+    try:
+        _tm = genai.GenerativeModel(model_name=MODEL_NAME)
+        _prompt = (
+            "Translatează în română. Păstrează frazele în engleză între ghilimele. "
+            "Returnează DOAR traducerea, fără introducere:\n\n" + text
+        )
+        _resp = _tm.generate_content(_prompt)
+        _ro = _resp.text.strip()
+        st.session_state.translations[msg_idx] = _ro
+        return _ro
+    except Exception as _e:
+        return f"[Eroare traducere: {_e}]"
+
+def _highlight_en_phrases(ro_text: str) -> str:
+    """Wrap text in double quotes with cyan span for English phrases."""
+    import html as _h
+    t = _h.escape(ro_text)
+    # Highlight content inside "..." or '...'
+    t = re.sub(r'&quot;(.+?)&quot;', r'<span class="en-phrase">"\1"</span>', t)
+    t = re.sub(r"&#x27;(.+?)&#x27;", r"<span class='en-phrase'>'\1'</span>", t)
+    t = t.replace("\n", "<br>")
+    return t
+
+
 def play_sound(sound_type: str):
     """
     Injectează un oscilator Web Audio API prin st.components.v1.html().
@@ -1696,6 +1724,54 @@ hr { border-color: var(--border) !important; }
 }
 
 
+
+/* ===== TRANSLATION PANEL ===== */
+@keyframes transFadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.trans-panel {
+    background: linear-gradient(135deg, #0a0a1a, #0d0d20);
+    border-left: 3px solid #ffd700;
+    border-radius: 0 0 12px 12px;
+    padding: 10px 14px 12px;
+    margin-top: -2px;
+    animation: transFadeIn 0.3s ease;
+}
+.trans-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #ffd700;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+}
+.trans-text {
+    color: #c8c8e8;
+    font-size: 0.88em;
+    font-style: italic;
+    line-height: 1.6;
+}
+.trans-text .en-phrase {
+    color: var(--cyan);
+    font-style: normal;
+    font-weight: 600;
+}
+.trans-toggle-btn {
+    display: inline-block;
+    background: transparent;
+    border: 1px solid #2a2a4a;
+    color: #4a6a8a;
+    font-size: 0.72rem;
+    padding: 3px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-top: 6px;
+    float: right;
+    transition: all 0.2s;
+}
+.trans-toggle-btn:hover { color: #ffd700; border-color: #ffd700; }
+
 /* ===== CHAT BUBBLES ===== */
 .chat-area {
     display: flex;
@@ -2301,6 +2377,10 @@ if "fc_flipped"        not in st.session_state: st.session_state.fc_flipped = Fa
 if "fc_scenario"       not in st.session_state: st.session_state.fc_scenario = None  # scenariu activ în FC
 # --- CHARACTER MOOD STATE ---
 if "char_mood"         not in st.session_state: st.session_state.char_mood = "😊 Ready to train you!"
+# --- TRANSLATION STATE ---
+if "translations"      not in st.session_state: st.session_state.translations = {}     # {msg_idx: ro_text}
+if "show_translation"  not in st.session_state: st.session_state.show_translation = {} # {msg_idx: bool}
+if "auto_translate"    not in st.session_state: st.session_state.auto_translate = False
 
 # --- XP FLOAT POPUP (inject after each turn) ---
 if st.session_state.get("xp_last_gain", 0) > 0:
@@ -2442,6 +2522,8 @@ with st.sidebar:
             st.session_state.level_up_pending = None
             st.session_state.xp_last_gain = 0
             st.session_state.char_mood = "😊 Ready to train you!"
+            st.session_state.translations = {}
+            st.session_state.show_translation = {}
             st.rerun()
     with col2:
         if st.button("📊 RAPORT", use_container_width=True):
@@ -2471,6 +2553,12 @@ with st.sidebar:
     sound_label = "🔊 Sunet ON" if st.session_state.sound_on else "🔇 Sunet OFF"
     if st.button(sound_label, use_container_width=True):
         st.session_state.sound_on = not st.session_state.sound_on
+        st.rerun()
+
+    # --- AUTO-TRANSLATE TOGGLE ---
+    auto_tr_label = "🇷🇴 Auto-traducere ON" if st.session_state.auto_translate else "🇷🇴 Auto-traducere OFF"
+    if st.button(auto_tr_label, use_container_width=True):
+        st.session_state.auto_translate = not st.session_state.auto_translate
         st.rerun()
 
     st.divider()
@@ -2625,6 +2713,8 @@ if st.session_state.last_scenario != selected_scenario_name:
     if len(st.session_state.scenarios_tried) >= len(SCENARIOS):
         award_badge("all_scenarios")
     st.session_state.char_mood = "😊 Ready to train you!"
+    st.session_state.translations = {}
+    st.session_state.show_translation = {}
     # Resetare QP la schimbarea scenariului
     st.session_state.qp_index = 0
     st.session_state.qp_answered = False
@@ -2781,7 +2871,7 @@ else:
         st.markdown('<div class="chat-area">', unsafe_allow_html=True)
         is_first_ai = True  # primul mesaj AI = opening line
 
-        for msg in st.session_state.messages:
+        for _mi, msg in enumerate(st.session_state.messages):
             role    = msg["role"]
             content = msg["content"]
 
@@ -2802,8 +2892,11 @@ else:
             else:
                 has_feedback = "**🔍 Feedback:**" in content or "🔍 Feedback:" in content
                 split_pt = content.find(_rp_marker) if _rp_marker else -1
+                # Skip translation for short opening messages (< 50 chars)
+                _is_opening = is_first_ai or not has_feedback or split_pt < 0
+                _allow_trans = not (_is_opening and len(content) < 50)
 
-                if is_first_ai or not has_feedback or split_pt < 0:
+                if _is_opening:
                     # Opening line sau mesaj simplu fără feedback
                     inner = _md_to_safe(content)
                     st.markdown(f"""
@@ -2827,6 +2920,42 @@ else:
     <div class="bubble-rp-avatar">{_sc_avatar}</div>
     <div class="bubble-rp-text">{rp_html}</div>
   </div>
+</div>""", unsafe_allow_html=True)
+
+                # ── TRANSLATION TOGGLE ────────────────────────────────────────
+                if _allow_trans:
+                    # Auto-translate: pre-populate show flag for latest AI msg
+                    _last_ai_idx = max(
+                        (i for i, m in enumerate(st.session_state.messages) if m["role"] == "assistant"),
+                        default=-1
+                    )
+                    if st.session_state.auto_translate and _mi == _last_ai_idx:
+                        st.session_state.show_translation[_mi] = True
+
+                    _showing = st.session_state.show_translation.get(_mi, False)
+                    _btn_lbl = "🇬🇧 Ascunde traducerea" if _showing else "🇷🇴 Vezi traducerea"
+
+                    if st.button(_btn_lbl, key=f"tr_btn_{_mi}"):
+                        st.session_state.show_translation[_mi] = not _showing
+                        if not _showing and _mi not in st.session_state.translations:
+                            # Translate only the "Why" explanation lines from feedback
+                            # + the roleplay part; skip ❌/✅ correction lines
+                            _trans_text = content
+                            if has_feedback and split_pt > 0:
+                                # Filter only 📖 Why: lines from feedback
+                                _fb_lines = fb_raw.split("\n") if split_pt > 0 else []
+                                _why_lines = [l for l in _fb_lines if "📖" in l or "Why" in l]
+                                _trans_text = "\n".join(_why_lines) + "\n\n" + rp_raw if _why_lines else rp_raw
+                            with st.spinner("🌐 Se traduce..."):
+                                get_translation(_mi, _trans_text)
+                        st.rerun()
+
+                    if _showing and _mi in st.session_state.translations:
+                        _ro_html = _highlight_en_phrases(st.session_state.translations[_mi])
+                        st.markdown(f"""
+<div class="trans-panel">
+  <div class="trans-label">🇷🇴 Traducere</div>
+  <div class="trans-text">{_ro_html}</div>
 </div>""", unsafe_allow_html=True)
 
         st.markdown('</div>', unsafe_allow_html=True)
